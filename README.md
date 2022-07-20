@@ -1,6 +1,8 @@
 # Windows Desktop Duplication
 
-![documentation](https://img.shields.io/badge/docs.rs-documentation-orange?link=https%3A%2F%2Fdocs.rs%2Fwin_desktop_duplication%2F)
+![docs.rs](https://img.shields.io/docsrs/win_desktop_duplication)
+![Crates.io](https://img.shields.io/crates/v/win_desktop_duplication)
+![Crates.io](https://img.shields.io/crates/l/win_desktop_duplication)
 
 This is meant to provide a low latency, low level access to desktop frames for use
 in applications like Game streaming (e.g., Google Stadia, Microsoft XCloud).
