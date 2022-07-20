@@ -13,13 +13,15 @@ The crate includes some convenient features that the source api does not provide
 ```rust
 #[tokio::main]
 fn main() {
+    set_process_dpi_awareness();
+    co_init();
     let adapter = AdapterFactory::new().get_adapter_by_idx(0).unwrap();
     let output = adapter.get_display_by_idx(0).unwrap();
     let mut dupl = DesktopDuplicationApi::new(adapter, output).unwrap();
     loop {
         // this api send one frame per vsync. the frame also has cursor pre drawn 
         let tex = dupl.acquire_next_vsync_frame().await?;
-        
+
         // .. use the texture
     }
 }
