@@ -10,6 +10,8 @@ keywords = ["GameStream", "Windows Desktop Duplication Api", "desktop capture", 
 include = ["LICENSE.md"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
