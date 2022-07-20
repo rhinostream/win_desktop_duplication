@@ -1,3 +1,6 @@
+//! Provides convenient tools for handling directx textures. [`TextureReader`][TextureReader] can be used to read
+//! textures.
+
 #[cfg(test)]
 mod test {
     use std::sync::Once;
@@ -80,7 +83,27 @@ use crate::texture::Texture;
 use crate::{DDApiError, Result};
 
 
-pub struct TextureReader {
+/// Tool for reading GPU only directx textures.
+///
+/// # Example usage
+///
+/// ```
+/// use win_desktop_duplication::tex_reader::TextureReader;
+///
+/// let mut reader = TextureReader::new(device, context);
+///
+/// // using same vector will be so much efficient.
+/// let mut data:Vec<u8> = Vec::new();
+///
+/// loop {
+///     let mut tex = // some way to acquire texture like DesktopDuplicationApi;
+///
+///     reader.get_data(&mut data,&mut tex).unwrap();
+///
+///     // use image data here. send it to client etc whatever
+/// }
+/// ```
+pub struct  TextureReader {
     device: ID3D11Device4,
     ctx: ID3D11DeviceContext4,
     tex: Option<Texture>,
@@ -91,6 +114,7 @@ unsafe impl Sync for TextureReader {}
 unsafe impl Send for TextureReader {}
 
 impl TextureReader {
+    /// create new instance of TextureReader
     pub fn new(device: ID3D11Device4, ctx: ID3D11DeviceContext4) -> Self {
         Self {
             device,
@@ -99,6 +123,7 @@ impl TextureReader {
         }
     }
 
+    /// retrieve data from texture and store it in vector
     pub fn get_data(&mut self, vec: &mut Vec<u8>, tex: &mut Texture) -> Result<()> {
         self.ensure_shape(tex)?;
         unsafe { self.ctx.CopyResource(self.tex.as_mut().unwrap().as_raw_ref(), tex.as_raw_ref()); }

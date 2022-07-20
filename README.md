@@ -10,10 +10,13 @@ The crate includes some convenient features that the source api does not provide
 
 ## Async Example
 
-> Although this example shows using
+> Although this example shows using `TextureReader`, for best performance, you want to use the texture directly to encode
+> via one of the hardware based encoders like nvenc or quick-sync.
 
 ```rust
-// the api must only be called from one thread
+use win_desktop_duplication::*;
+use win_desktop_duplication::{tex_reader::*, devices::*};
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // this is required to be able to use desktop duplication api
@@ -21,12 +24,12 @@ async fn main() {
     co_init();
 
 
-    // select gpu and output you want to use. 
+    // select gpu and output you want to use.
     let adapter = AdapterFactory::new().get_adapter_by_idx(0).unwrap();
     let output = adapter.get_display_by_idx(0).unwrap();
 
 
-    // get output duplication api 
+    // get output duplication api
     let mut dupl = DesktopDuplicationApi::new(adapter, output).unwrap();
 
     // Optional: get TextureReader to read GPU textures into CPU.
@@ -37,10 +40,11 @@ async fn main() {
     // create a vector to hold picture data;
     let mut pic_data: Vec<u8> = vec![0; 0];
     loop {
-        // this api send one frame per vsync. the frame also has cursor pre drawn 
+        // this api send one frame per vsync. the frame also has cursor pre drawn
         let tex = dupl.acquire_next_vsync_frame().await;
         if let Ok(tex) = tex {
-            texture_reader.read_data(&mut pic_data, &mut tex);
+            let mut tex = tex;
+            texture_reader.get_data(&mut pic_data, &mut tex);
             // use pic_data as necessary
         }
     }
@@ -49,20 +53,23 @@ async fn main() {
 
 ## Sync Example
 
-> Although this example shows using
+> Although this example shows using `TextureReader`, for best performance, you want to use the texture directly to encode
+> via one of the hardware based encoders like nvenc or quick-sync.
 
 ```rust
-// the api must only be called from one thread
+use win_desktop_duplication::*;
+use win_desktop_duplication::{tex_reader::*, devices::*};
+
 fn main() {
     // this is required to be able to use desktop duplication api
     set_process_dpi_awareness();
     co_init();
-    
-    // select gpu and output you want to use. 
+
+    // select gpu and output you want to use.
     let adapter = AdapterFactory::new().get_adapter_by_idx(0).unwrap();
     let output = adapter.get_display_by_idx(0).unwrap();
 
-    // get output duplication api 
+    // get output duplication api
     let mut dupl = DesktopDuplicationApi::new(adapter, output.clone()).unwrap();
 
     // Optional: get TextureReader to read GPU textures into CPU.
@@ -73,12 +80,13 @@ fn main() {
     // create a vector to hold picture data;
     let mut pic_data: Vec<u8> = vec![0; 0];
     loop {
-        // this api send one frame per vsync. the frame also has cursor pre drawn 
+        // this api send one frame per vsync. the frame also has cursor pre drawn
         output.wait_for_vsync().unwrap();
         let tex = dupl.acquire_next_frame_now();
-        
+
         if let Ok(tex) = tex {
-            texture_reader.read_data(&mut pic_data, &mut tex);
+            let mut tex = tex;
+            texture_reader.get_data(&mut pic_data, &mut tex);
             // use pic_data as necessary
         }
     }
