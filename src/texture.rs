@@ -33,7 +33,7 @@ impl Texture {
                 format: ColorFormat::from(desc.Format),
             })
         }
-        return self.desc.unwrap();
+        self.desc.unwrap()
     }
 
     /// get reference of internal texture instance
@@ -102,28 +102,28 @@ impl From<DXGI_FORMAT> for ColorFormat {
     }
 }
 
-impl Into<DXGI_FORMAT> for ColorFormat {
-    fn into(self) -> DXGI_FORMAT {
-        match self {
-            Self::RGBA8UNorm => {
+impl From<ColorFormat> for DXGI_FORMAT {
+    fn from(f: ColorFormat) -> Self {
+        match f {
+            ColorFormat::RGBA8UNorm => {
                 DXGI_FORMAT_B8G8R8A8_UNORM
             }
-            Self::YUV444 => {
+            ColorFormat::YUV444 => {
                 DXGI_FORMAT_AYUV
             }
-            Self::NV12 => {
+            ColorFormat::NV12 => {
                 DXGI_FORMAT_NV12
             }
-            Self::RGBA16Float => {
+            ColorFormat::RGBA16Float => {
                 DXGI_FORMAT_R16G16B16A16_FLOAT
             }
-            Self::RGBA10UNorm => {
+            ColorFormat::RGBA10UNorm => {
                 DXGI_FORMAT_R10G10B10A2_UNORM
             }
-            Self::Y410 => {
+            ColorFormat::Y410 => {
                 DXGI_FORMAT_Y410
             }
-            Self::Unknown => {
+            ColorFormat::Unknown => {
                 DXGI_FORMAT(0)
             }
             ColorFormat::YUV420 => {

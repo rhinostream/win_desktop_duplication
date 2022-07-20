@@ -175,7 +175,6 @@ impl Display {
         if !success.as_bool() {
             Err(DDApiError::Unexpected("Failed to retrieve display settings for output".to_string()))
         } else {
-            println!("{}",mode.dmBitsPerPel);
             Ok(DisplayMode {
                 width: mode.dmPelsWidth,
                 height: mode.dmPelsHeight,

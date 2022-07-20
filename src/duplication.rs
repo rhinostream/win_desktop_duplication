@@ -7,13 +7,14 @@
 #[cfg(test)]
 mod test {
     use std::sync::Once;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use futures::select;
     use crate::devices::AdapterFactory;
     use crate::duplication::DesktopDuplicationApi;
     use futures::FutureExt;
     use log::LevelFilter::Debug;
     use tokio::time::interval;
+    use crate::outputs::DisplayMode;
     use crate::utils::{co_init, set_process_dpi_awareness};
 
 
@@ -28,17 +29,25 @@ mod test {
     #[test]
     fn test_duplication() {
         initialize();
-        set_process_dpi_awareness();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .thread_name("graphics_thread".to_owned()).enable_time().build().unwrap();
 
         rt.block_on(async {
+            set_process_dpi_awareness();
             co_init();
 
             let adapter = AdapterFactory::new().get_adapter_by_idx(0).unwrap();
             let output = adapter.get_display_by_idx(0).unwrap();
-            let mut dupl = DesktopDuplicationApi::new(adapter, output).unwrap();
+            let mut dupl = DesktopDuplicationApi::new(adapter, output.clone()).unwrap();
+            let curr_mode = output.get_current_display_mode().unwrap();
+            let new_mode = DisplayMode {
+                width: 1280,
+                height: 720,
+                refresh_num: curr_mode.refresh_num,
+                refresh_den: curr_mode.refresh_den,
+                hdr: false,
+            };
 
             let mut counter = 0;
             let mut secs = 0;
@@ -46,14 +55,21 @@ mod test {
             loop {
                 select! {
                     tex = dupl.acquire_next_vsync_frame().fuse()=>{
-                        tex.unwrap();
-                        counter = counter+1;
+                        if let Err(e) = tex {
+                            println!("error: {:?}",e)
+                        } else {
+                            counter += 1;
+                        };
                     },
                     _ = interval.tick().fuse() => {
                         println!("fps: {}",counter);
                         counter = 0;
                         secs+=1;
                         if secs == 5 {
+                            println!("5 secs");
+                            output.set_display_mode(&new_mode).unwrap();
+                        } else if secs ==10 {
+                            output.set_display_mode(&curr_mode).unwrap();
                             break;
                         }
                     }
@@ -62,16 +78,62 @@ mod test {
             };
         });
     }
+
+    #[test]
+    fn test_duplication_blocking() {
+        initialize();
+
+        set_process_dpi_awareness();
+        co_init();
+
+        let adapter = AdapterFactory::new().get_adapter_by_idx(0).unwrap();
+        let output = adapter.get_display_by_idx(0).unwrap();
+        let mut dupl = DesktopDuplicationApi::new(adapter, output.clone()).unwrap();
+        let curr_mode = output.get_current_display_mode().unwrap();
+        let new_mode = DisplayMode {
+            width: 1280,
+            height: 720,
+            refresh_num: curr_mode.refresh_num,
+            refresh_den: curr_mode.refresh_den,
+            hdr: false,
+        };
+
+        let mut counter = 0;
+        let mut secs = 0;
+        let instant = Instant::now();
+        loop {
+            let _ = output.wait_for_vsync();
+            let tex = dupl.acquire_next_frame_now();
+            if let Err(e) = tex {
+                println!("error: {:?}", e)
+            } else {
+                counter += 1;
+            };
+            if secs != instant.elapsed().as_secs() {
+                println!("fps: {}", counter);
+                counter = 0;
+                secs += 1;
+                if secs == 1 {
+                    println!("1 secs");
+                    output.set_display_mode(&new_mode).unwrap();
+                } else if secs == 5 {
+                    output.set_display_mode(&curr_mode).unwrap();
+                    break;
+                }
+            }
+        }
+    }
 }
 
 
-use std::mem::{size_of, swap};
+use std::mem::{size_of};
 use std::ptr::null;
+use std::time::Duration;
 use futures::{StreamExt};
 use log::{debug, error, trace, warn};
 use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device4, ID3D11DeviceContext4};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1};
-use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_SESSION_DISCONNECTED, IDXGIDevice4, IDXGIOutputDuplication, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_INVALID_CALL, IDXGISurface1, DXGI_ERROR_WAIT_TIMEOUT};
+use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_SESSION_DISCONNECTED, IDXGIDevice4, IDXGIOutputDuplication, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_INVALID_CALL, IDXGISurface1, DXGI_ERROR_WAIT_TIMEOUT, IDXGIResource};
 use windows::core::Interface;
 use windows::core::Result as WinResult;
 use windows::Win32::Foundation::{E_INVALIDARG, E_ACCESSDENIED, POINT, GetLastError, BOOL};
@@ -86,18 +148,19 @@ use crate::outputs::{Display, DisplayVSyncStream};
 use crate::Result;
 use crate::texture::{Texture, TextureDesc};
 
-/// Provides asynchronous api for windows desktop duplication with additional features such as
+
+/// Provides asynchronous, synchronous api for windows desktop duplication with additional features such as
 /// cursor pre-drawn, frame rate synced to desktop refresh rate.
 ///
 /// please note that this api works best if created and called from a single thread.
 /// Ideal scenario would be to maintain a "Graphics thread" in your application where all the
 /// Graphics related tasks are performed asynchronously.
 ///
-/// acquire_next_frame especially should be called from only one thread because it only works if the
+/// acquire_next_frame_now especially should be called from only one thread because it only works if the
 /// thread calling it is marked as desktop thread. Although the application attempts to set any
 /// thread you call this method from as desktop thread, it's not usually a good idea.
 ///
-/// # Example
+/// # Async Example
 /// ```
 /// use win_desktop_duplication::duplication::DesktopDuplicationApi;
 /// async {
@@ -108,13 +171,29 @@ use crate::texture::{Texture, TextureDesc};
 ///     }
 ///
 /// }
+///
+/// ```
+///
+/// # Sync Example
+/// ```
+///     use win_desktop_duplication::DesktopDuplicationApi;
+///     // ....
+///     {
+///         let mut duplication = DesktopDuplicationApi::new(adapter, output)?;
+///         loop {
+///             output.wait_for_vsync();
+///             let tex = duplication.acquire_next_frame_now()?;
+///             // use the texture to encode video
+///             //...
+///         }
+///     }
 /// ```
 pub struct DesktopDuplicationApi {
     d3d_device: ID3D11Device4,
     d3d_ctx: ID3D11DeviceContext4,
     output: Display,
     vsync_stream: DisplayVSyncStream,
-    dupl: IDXGIOutputDuplication,
+    dupl: Option<IDXGIOutputDuplication>,
 
     options: DuplicationApiOptions,
 
@@ -133,6 +212,9 @@ impl DesktopDuplicationApi {
     /// adapter.
     ///
     /// If you wish to use your own directx device, context, use [new_with][Self::new_with] method
+    ///
+    /// this method fails with
+    /// * [DDApiError::Unsupported] when the application's dpi awareness is not set. use [crate::set_process_dpi_awareness]
     pub fn new(adapter: Adapter, output: Display) -> Result<Self> {
         let (device, ctx) = Self::create_device(&adapter)?;
         Self::new_with(device, ctx, output)
@@ -140,14 +222,13 @@ impl DesktopDuplicationApi {
 
     /// Creates a new instance of the api from provided device and context.
     pub fn new_with(d3d_device: ID3D11Device4, ctx: ID3D11DeviceContext4, output: Display) -> Result<Self> {
-        // Self::switch_thread_desktop()?;
         let dupl = Self::create_dupl_output(&d3d_device, &output)?;
         Ok(Self {
             d3d_device,
             d3d_ctx: ctx,
             vsync_stream: output.get_vsync_stream(),
             output,
-            dupl,
+            dupl: Some(dupl),
             options: Default::default(),
             state: Default::default(),
         })
@@ -157,6 +238,19 @@ impl DesktopDuplicationApi {
     /// this helps application acquire frames with same rate as display's native refresh-rate.
     ///
     /// this is an asynchronous method. check example in the [doc][DesktopDuplicationApi] for more details
+    ///
+    /// This method fails with following errors
+    ///
+    /// ## Recoverable errors
+    /// these can be recovered by just calling the function again after this error.
+    /// * [DDApiError::AccessLost] - when desktop mode switch happens (resolution change) or desktop
+    /// changes. (going to lock screen etc).
+    /// * [DDApiError::AccessDenied] - when windows opens a secure environment, this application
+    /// will be denied access.
+    ///
+    /// ## Non-recoverable errors
+    /// * [DDApiError::Unexpected] - this type of error cant be recovered from. the application should
+    /// drop the struct and re create a new instance.
     pub async fn acquire_next_vsync_frame(&mut self) -> Result<Texture> {
         // wait for vsync
         if (self.vsync_stream.next().await).is_none() {
@@ -164,7 +258,13 @@ impl DesktopDuplicationApi {
         }
 
         // acquire next_frame
-        self.acquire_next_frame()
+        let res = self.acquire_next_frame_now();
+        if res.is_err() {
+            trace!("something went wrong with acquiring next frame. probably desktop duplication \
+            instance failed. waiting for 200ms");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        res
     }
 
     fn create_device(adapter: &Adapter) -> Result<(ID3D11Device4, ID3D11DeviceContext4)> {
@@ -214,31 +314,51 @@ impl DesktopDuplicationApi {
         Ok(dupl.unwrap())
     }
 
-    fn acquire_next_frame(&mut self) -> Result<Texture> {
+    /// unlike [acquire_next_vsync_frame][Self::acquire_next_vsync_frame], this is a blocking call and immediately returns the texture
+    /// without waiting for vsync.
+    ///
+    /// the method handles any switches in desktop automatically.
+    ///
+    /// this fails with following results:
+    ///
+    /// ## Recoverable errors
+    /// these can be recovered by just calling the function again after this error.
+    /// * [DDApiError::AccessLost] - when desktop mode switch happens (resolution change) or desktop
+    /// changes. (going to lock screen etc).
+    /// * [DDApiError::AccessDenied] - when windows opens a secure environment, this application
+    /// will be denied access.
+    ///
+    /// ## Non-recoverable errors
+    /// * [DDApiError::Unexpected] - this type of error cant be recovered from. the application should
+    /// drop the struct and re create a new instance.
+    pub fn acquire_next_frame_now(&mut self) -> Result<Texture> {
         self.release_locked_frame();
-
         let mut frame_info = Default::default();
-        let mut last_resource = None;
 
-        let status = unsafe { self.dupl.AcquireNextFrame(0, &mut frame_info, &mut last_resource) };
-
+        if self.dupl.is_none() {
+            self.reacquire_dup()?;
+        }
+        let dupl = self.dupl.as_ref().unwrap();
+        let status = unsafe { dupl.AcquireNextFrame(0, &mut frame_info, &mut self.state.last_resource) };
         if let Err(e) = status {
             match e.code() {
                 DXGI_ERROR_ACCESS_LOST => {
-                    warn!("display access lost. maybe desktop mode switch?");
-                    self.reacquire_dup()?
+                    warn!("display access lost. maybe desktop mode switch?, {:?}",e);
+                    self.reacquire_dup()?;
+                    return Err(DDApiError::AccessLost);
                 }
                 DXGI_ERROR_ACCESS_DENIED => {
                     warn!("display access is denied. Maybe running in a secure environment?");
-                    self.reacquire_dup()?
+                    self.reacquire_dup()?;
+                    return Err(DDApiError::AccessDenied);
                 }
                 DXGI_ERROR_INVALID_CALL => {
                     warn!("dxgi_error_invalid_call. maybe forgot to ReleaseFrame()?");
-                    let _ = unsafe { self.dupl.ReleaseFrame() };
+                    self.reacquire_dup()?;
                     return Err(DDApiError::AccessLost);
                 }
                 DXGI_ERROR_WAIT_TIMEOUT => {
-                    trace!("no new frame is available")
+                    trace!("no new frame is available");
                 }
                 _ => {
                     return Err(DDApiError::Unexpected(format!("acquire frame failed {:?}", e)));
@@ -246,12 +366,17 @@ impl DesktopDuplicationApi {
             }
         }
 
-        if let Some(resource) = last_resource {
+
+        if let Some(resource) = self.state.last_resource.as_ref() {
             self.state.frame_locked = true;
             let mut new_frame = Texture::new(resource.cast().unwrap());
             self.ensure_cache_frame(&mut new_frame)?;
             unsafe { self.d3d_ctx.CopyResource(self.state.frame.as_ref().unwrap().as_raw_ref(), new_frame.as_raw_ref()); }
         }
+        if self.state.frame.is_none() {
+            return Err(DDApiError::AccessLost);
+        }
+
         let mut cache_frame = self.state.frame.clone().unwrap();
         self.ensure_cache_cursor_frame(&mut cache_frame)?;
         let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
@@ -266,6 +391,18 @@ impl DesktopDuplicationApi {
             self.draw_cursor(&cache_cursor_frame)?
         }
         Ok(cache_cursor_frame)
+    }
+
+
+    /// this method is used to retrieve device and context used in this api. These can be used
+    /// to build directx color conversion and image scale.
+    pub fn get_device_and_ctx(&self) -> (ID3D11Device4, ID3D11DeviceContext4) {
+        return (self.d3d_device.clone(), self.d3d_ctx.clone());
+    }
+
+    /// configure duplication manager with given options.
+    pub fn configure(&mut self, opt: DuplicationApiOptions) {
+        self.options = opt;
     }
 
     fn draw_cursor(&mut self, tex: &Texture) -> Result<()> {
@@ -335,20 +472,25 @@ impl DesktopDuplicationApi {
 
     fn reacquire_dup(&mut self) -> Result<()> {
         self.state.reset();
+        self.dupl = None;
 
-        Self::switch_thread_desktop()?;
-
-        let mut dupl = Self::create_dupl_output(&self.d3d_device, &self.output)?;
-
-        swap(&mut self.dupl, &mut dupl);
-
+        let dupl = Self::create_dupl_output(&self.d3d_device, &self.output);
+        if dupl.is_err() {
+            let _ = Self::switch_thread_desktop();
+        }
+        let dupl = dupl?;
+        debug!("successfully acquired new duplication instance");
+        self.dupl = Some(dupl);
         Ok(())
     }
 
     fn release_locked_frame(&mut self) {
-        if self.state.frame_locked {
-            unsafe { self.dupl.ReleaseFrame().unwrap() };
+        if self.dupl.is_some() {
+            let _ = unsafe { self.dupl.as_ref().unwrap().ReleaseFrame() };
             self.state.frame_locked = false;
+        }
+        if self.state.last_resource.is_some() {
+            self.state.last_resource = None;
         }
     }
 
@@ -406,7 +548,7 @@ impl DesktopDuplicationApi {
         }
         let result = unsafe { SetThreadDesktop(desk.unwrap()) };
         if !result.as_bool() {
-            error!("dint switch desktop:");
+            error!("dint switch desktop: {:?}",unsafe{GetLastError().to_hresult()});
             return Err(DDApiError::AccessDenied);
         }
         Ok(())
@@ -419,13 +561,15 @@ impl DesktopDuplicationApi {
 /// currently it only supports option to skip drawing cursor
 #[derive(Default)]
 pub struct DuplicationApiOptions {
-    skip_cursor: bool,
+    pub skip_cursor: bool,
 }
 
 // these are state variables for duplication sync stream
 #[derive(Default)]
 struct DuplicationState {
     frame_locked: bool,
+    last_resource: Option<IDXGIResource>,
+
     frame: Option<Texture>,
     cursor_frame: Option<Texture>,
 
@@ -437,6 +581,7 @@ struct DuplicationState {
 impl DuplicationState {
     pub fn reset(&mut self) {
         self.frame = None;
+        self.last_resource = None;
         self.cursor_frame = None;
         self.frame_locked = false;
     }

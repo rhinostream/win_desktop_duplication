@@ -1,12 +1,12 @@
 [package]
 name = "win_desktop_duplication"
-version = "0.8.2"
+version = "0.9.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
 description = "easy to use windows desktop duplication api"
 categories = ["rendering::graphics-api", "os::windows-apis", "asynchronous", "hardware-support"]
-keywords = ["GameStream", "desktop", "duplication", "capture", "screen-capture"]
+keywords = ["game-stream", "desktop", "duplication", "capture", "screen-capture", "dxgi", "dxg", "directx"]
 repository = "https://github.com/rhinostream/win_desktop_duplication.git"
 homepage = "https://github.com/rhinostream/win_desktop_duplication"
 documentation = "https://docs.rs/win_desktop_duplication"
@@ -40,7 +40,8 @@ log = "0.4.17"
 version = "1.20.0"
 features = [
     "rt",
-    "time"
+    "time",
+    "macros"
 ]
 
 [dependencies.windows]
