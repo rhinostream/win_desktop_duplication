@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
 description = "easy to use windows desktop duplication api"
+categories = ["Graphics", "Windows", "Asynchronous"]
 keywords = ["GameStream", "desktop", "duplication", "capture", "screen-capture"]
 repository = "https://github.com/rhinostream/win_desktop_duplication.git"
 homepage = "https://github.com/rhinostream/win_desktop_duplication"

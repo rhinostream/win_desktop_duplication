@@ -11,7 +11,8 @@ The crate includes some convenient features that the source api does not provide
 ## Usage
 
 ```rust
-#[tokio::main]
+// the api must only be called from one thread
+#[tokio::main(flavor = "current_thread")]
 fn main() {
     set_process_dpi_awareness();
     co_init();
