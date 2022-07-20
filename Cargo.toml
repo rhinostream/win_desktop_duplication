@@ -5,13 +5,15 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
 description = "easy to use windows desktop duplication api"
-license-file = "LICENSE.md"
 keywords = ["GameStream", "Windows Desktop Duplication Api", "desktop capture", "screen capture"]
 include = ["LICENSE.md"]
+repository = "https://github.com/rhinostream/win_desktop_duplication.git"
+homepage = "https://github.com/rhinostream/win_desktop_duplication"
+documentation = "https://docs.rs/win_desktop_duplication"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-path = "src/lib.rs"
+path = "lib.rs"
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
