@@ -13,7 +13,13 @@ documentation = "https://docs.rs/win_desktop_duplication"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-path = "src/lib.rs"
+name = "win_desktop_duplication"           # The name of the target.
+path = "src/lib.rs"    # The source file of the target.
+test = true            # Is tested by default.
+doc = true             # Is documented by default.
+edition = "2021"       # The edition of the target.
+crate-type = ["lib"]   # The crate types to generate.
+
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
