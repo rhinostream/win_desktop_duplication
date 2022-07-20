@@ -1,11 +1,11 @@
 [package]
 name = "win_desktop_duplication"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
 description = "easy to use windows desktop duplication api"
-categories = ["Graphics", "Windows", "Asynchronous"]
+categories = ["rendering::graphics-api", "os::windows-apis", "asynchronous", "hardware-support"]
 keywords = ["GameStream", "desktop", "duplication", "capture", "screen-capture"]
 repository = "https://github.com/rhinostream/win_desktop_duplication.git"
 homepage = "https://github.com/rhinostream/win_desktop_duplication"
