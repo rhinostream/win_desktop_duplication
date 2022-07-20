@@ -1,5 +1,7 @@
 # Windows Desktop Duplication
 
+![documentation](https://img.shields.io/badge/docs.rs-documentation-orange?link=https%3A%2F%2Fdocs.rs%2Fwin_desktop_duplication%2F)
+
 This is meant to provide a low latency, low level access to desktop frames for use
 in applications like Game streaming (e.g., Google Stadia, Microsoft XCloud).
 
@@ -10,8 +12,8 @@ The crate includes some convenient features that the source api does not provide
 
 ## Async Example
 
-> Although this example shows using `TextureReader`, for best performance, you want to use the texture directly to encode
-> via one of the hardware based encoders like nvenc or quick-sync.
+> Although this example shows using `TextureReader`, for best performance, you want to use the texture directly to
+> encode via one of the hardware based encoders like nvenc or quick-sync.
 
 ```rust
 use win_desktop_duplication::*;
@@ -53,7 +55,8 @@ async fn main() {
 
 ## Sync Example
 
-> Although this example shows using `TextureReader`, for best performance, you want to use the texture directly to encode
+> Although this example shows using `TextureReader`, for best performance, you want to use the texture directly to
+> encode
 > via one of the hardware based encoders like nvenc or quick-sync.
 
 ```rust
