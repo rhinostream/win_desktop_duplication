@@ -5,6 +5,7 @@
 1. Added orientation support for `Display`. their size will now accurately 
    represent size of texture that desktop duplication api returns.
 2. `DisplayOrientation` enum is used to represent various mode.
+3. Updated `windows` crate version
 
 ## v 0.9.0
 
