@@ -1,5 +1,11 @@
 # Change log
 
+## v 0.10.0
+
+1. Added orientation support for `Display`. their size will now accurately 
+   represent size of texture that desktop duplication api returns.
+2. `DisplayOrientation` enum is used to represent various mode.
+
 ## v 0.9.0
 
 1. Added synchronous api for `DesktopDuplicationApi`
