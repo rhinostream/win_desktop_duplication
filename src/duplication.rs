@@ -44,6 +44,7 @@ mod test {
             let new_mode = DisplayMode {
                 width: 1280,
                 height: 720,
+                orientation: Default::default(),
                 refresh_num: curr_mode.refresh_num,
                 refresh_den: curr_mode.refresh_den,
                 hdr: false,
@@ -93,6 +94,7 @@ mod test {
         let new_mode = DisplayMode {
             width: 1280,
             height: 720,
+            orientation: Default::default(),
             refresh_num: curr_mode.refresh_num,
             refresh_den: curr_mode.refresh_den,
             hdr: false,

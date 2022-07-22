@@ -7,12 +7,13 @@
 mod test {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI32, Ordering};
+    use std::thread::sleep;
     use std::time::Duration;
     use futures::StreamExt;
     use tokio::runtime::Builder;
     use tokio::time;
     use crate::devices::AdapterFactory;
-    use crate::outputs::DisplayMode;
+    use crate::outputs::{DisplayMode, DisplayOrientation};
 
     #[test]
     fn test_display_names() {
@@ -37,12 +38,14 @@ mod test {
         let mode = DisplayMode {
             width: 1920,
             height: 1080,
-            refresh_num: 120,
+            orientation: DisplayOrientation::Rotate180,
+            refresh_num: 60,
             refresh_den: 1,
             hdr: false,
         };
 
         disp.set_display_mode(&mode).unwrap();
+        sleep(Duration::from_secs(5));
         disp.set_display_mode(&curr_settings).unwrap();
         println!("{:?}", curr_settings);
     }
@@ -101,7 +104,7 @@ use log::{error, trace};
 use windows::Win32::Graphics::Dxgi::{DXGI_MODE_DESC1, DXGI_OUTPUT_DESC1, IDXGIOutput6};
 use windows::core::{PCSTR, Result as WinResult};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM};
-use windows::Win32::Graphics::Gdi::{CDS_TYPE, ChangeDisplaySettingsExA, DEVMODEA, DISP_CHANGE_SUCCESSFUL, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsExA};
+use windows::Win32::Graphics::Gdi::{CDS_TYPE, ChangeDisplaySettingsExA, DEVMODEA, DISP_CHANGE_SUCCESSFUL, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsExA};
 use crate::errors::DDApiError;
 use crate::utils::convert_u16_to_string;
 
@@ -144,12 +147,21 @@ impl Display {
             ..Default::default()
         };
         display_mode.dmSize = size_of::<DEVMODEA>() as _;
-        display_mode.dmPelsHeight = mode.height;
-        display_mode.dmPelsWidth = mode.width;
+        match mode.orientation {
+            DisplayOrientation::NoRotation | DisplayOrientation::Rotate180 => {
+                display_mode.dmPelsHeight = mode.height;
+                display_mode.dmPelsWidth = mode.width;
+            }
+            DisplayOrientation::Rotate90 | DisplayOrientation::Rotate270 => {
+                display_mode.dmPelsHeight = mode.width;
+                display_mode.dmPelsWidth = mode.height;
+            }
+        }
         display_mode.dmBitsPerPel = if mode.hdr { 64 } else { 32 };
         display_mode.dmDisplayFrequency = mode.refresh_num / mode.refresh_den;
+        display_mode.Anonymous1.Anonymous2.dmDisplayOrientation = mode.orientation.into();
 
-        display_mode.dmFields |= (DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL ) as u32;
+        display_mode.dmFields |= (DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL | DM_DISPLAYORIENTATION) as u32;
 
         let resp = unsafe { ChangeDisplaySettingsExA(PCSTR(name.as_ptr() as _), &display_mode, None, CDS_TYPE(0), null()) };
 
@@ -170,18 +182,23 @@ impl Display {
             dmDriverExtra: 0,
             ..Default::default()
         };
-
         let success = unsafe { EnumDisplaySettingsExA(PCSTR(name.as_c_str().as_ptr() as _), ENUM_CURRENT_SETTINGS, &mut mode, 0) };
         if !success.as_bool() {
             Err(DDApiError::Unexpected("Failed to retrieve display settings for output".to_string()))
         } else {
-            Ok(DisplayMode {
+            let mut dm = DisplayMode {
                 width: mode.dmPelsWidth,
                 height: mode.dmPelsHeight,
+                orientation: unsafe { mode.Anonymous1.Anonymous2.dmDisplayOrientation }.into(),
                 refresh_num: mode.dmDisplayFrequency,
                 refresh_den: 1,
                 hdr: mode.dmBitsPerPel != 32,
-            })
+            };
+            if matches!(dm.orientation,DisplayOrientation::Rotate90|DisplayOrientation::Rotate270) {
+                dm.height = mode.dmPelsWidth;
+                dm.width = mode.dmPelsHeight;
+            }
+            Ok(dm)
         }
     }
 
@@ -233,16 +250,65 @@ unsafe impl Send for Display {}
 
 unsafe impl Sync for Display {}
 
+
+/// Enum for display orientation
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default)]
+pub enum DisplayOrientation {
+    /// Landscape mode
+    #[default]
+    NoRotation,
+
+    /// Portrait mode
+    Rotate90,
+
+    /// Landscape (flipped) mode
+    Rotate180,
+
+    /// Portrait (flipped) mode
+    Rotate270,
+}
+
+impl From<u32> for DisplayOrientation {
+    fn from(i: u32) -> Self {
+        match i {
+            1 => Self::Rotate90,
+            2 => Self::Rotate180,
+            3 => Self::Rotate270,
+            _ => Self::NoRotation,
+        }
+    }
+}
+
+impl From<DisplayOrientation> for u32 {
+    fn from(i: DisplayOrientation) -> Self {
+        match i {
+            DisplayOrientation::NoRotation => { 0 }
+            DisplayOrientation::Rotate90 => { 1 }
+            DisplayOrientation::Rotate180 => { 2 }
+            DisplayOrientation::Rotate270 => { 3 }
+        }
+    }
+}
+
+
 #[repr(C)]
 #[derive(Clone, Default, Debug)]
 /**
-DisplayMode represents one display mode of monitor. It contains resolution and refresh-rate
+DisplayMode represents one display mode of monitor. It contains resolution, refresh-rate and orientation.
+The resolution contains width and height of display for their default orientation.
+
+For example, a 1920 x 1080 monitor will have width 1920 and height 1080 irrespective of the orientation of
+the monitor.
  */
 pub struct DisplayMode {
     /// width of the given display in pixels
     pub width: u32,
     /// height of the given display in pixels
     pub height: u32,
+
+    /// orientation of the display
+    pub orientation: DisplayOrientation,
 
     /// refresh-rate is usually represented as a fraction. refresh_num is numerator of that fraction
     pub refresh_num: u32,
@@ -270,7 +336,7 @@ pub struct DisplayMode {
 /// // this loop only exits when there is an unexpected error in the stream.
 /// }
 /// ```
-pub struct  DisplayVSyncStream {
+pub struct DisplayVSyncStream {
     sync_rx: Receiver<Result<(), DDApiError>>,
     thread_fn: Option<Box<dyn FnOnce(Waker)>>,
 }
