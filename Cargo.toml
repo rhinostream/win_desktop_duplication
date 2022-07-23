@@ -4,7 +4,7 @@ version = "0.10.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
-description = "easy to use windows desktop duplication api"
+description = "Simple and efficient DXGI desktop duplication api"
 categories = ["rendering::graphics-api", "os::windows-apis", "asynchronous", "hardware-support"]
 keywords = ["desktop", "duplication", "capture", "dxgi", "directx"]
 repository = "https://github.com/rhinostream/win_desktop_duplication.git"
@@ -17,7 +17,6 @@ include = [
     "LISENCE.md"
 ]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "win_desktop_duplication"           # The name of the target.
 path = "src/lib.rs"    # The source file of the target.
@@ -31,9 +30,11 @@ crate-type = ["lib"]   # The crate types to generate.
 default-target = "x86_64-pc-windows-msvc"
 targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
 
+[dev-dependencies]
+env_logger = "0.9.0"
+
 [dependencies]
 futures = "0.3.21"
-env_logger = "0.9.0"
 log = "0.4.17"
 
 [dependencies.tokio]
