@@ -1,6 +1,6 @@
 [package]
 name = "win_desktop_duplication"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
@@ -38,7 +38,7 @@ futures = "0.3.21"
 log = "0.4.17"
 
 [dependencies.tokio]
-version = "1.20.0"
+version = "1.20.1"
 features = [
     "rt",
     "time",

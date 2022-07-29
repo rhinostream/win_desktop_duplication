@@ -1,5 +1,8 @@
 # Change log
 
+## v 0.10.1
+1. Updated `ColorFormat` enum and added docs for each format. 
+
 ## v 0.10.0
 
 1. Added orientation support for `Display`. their size will now accurately 
