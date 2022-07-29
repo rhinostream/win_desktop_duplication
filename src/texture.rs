@@ -93,6 +93,7 @@ pub enum ColorFormat {
     YUV444_10bit,
 
     /// 16 bit Semi-Planar YUV. Y plane followed by interleaved UV plane . Each pixel of size 2 bytes. Most Significant 10 bits contain pixel data.
+    /// this format is also called P010
     YUV420_10bit,
 }
 
