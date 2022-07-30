@@ -60,6 +60,15 @@ pub struct TextureDesc {
 /// enumeration of color formats. this is mainly used to convert color formats
 /// from different libraries into a common format.
 ///
+/// you can convert between DXGI_FORMAT and this format using into.
+///
+/// For example:
+///
+/// ```
+///     let format_dxgi: DXGI_FORMAT = ColorFormat::ARGBUNorm.into();
+///     let format: ColorFormat = DXGI_FORMAT_R8G8B8A8_UNORM.into();
+/// ```
+///
 /// when using this in your own project, feel free to implement From and Into
 /// traits that convert from other packages like nvenc or intel quick sync.
 #[repr(u32)]
