@@ -63,7 +63,7 @@ pub struct TextureDesc {
 /// when using this in your own project, feel free to implement From and Into
 /// traits that convert from other packages like nvenc or intel quick sync.
 #[repr(u32)]
-#[derive(Clone, Copy, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Default, Debug)]
 pub enum ColorFormat {
     #[default]
     Unknown,
