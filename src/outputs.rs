@@ -17,8 +17,11 @@ mod test {
 
     #[test]
     fn test_display_names() {
-        for display in AdapterFactory::new().get_adapter_by_idx(0).unwrap().iter_displays() {
-            println!("{}", display.name())
+        for adapter in AdapterFactory::new() {
+            println!("{}", adapter.name());
+            for display in adapter.iter_displays() {
+                println!("\t{}", display.name())
+            }
         }
     }
 
