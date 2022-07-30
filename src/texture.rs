@@ -1,6 +1,6 @@
 //! contains convenience wrappers and utility functions for handling directx textures.
 
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_Y410};
 
@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI
 #[derive(Clone)]
 pub struct Texture {
     tex: ID3D11Texture2D,
-    desc: RwLock<Option<TextureDesc>>,
+    desc: Arc<RwLock<Option<TextureDesc>>>,
 }
 
 impl Texture {
@@ -18,7 +18,7 @@ impl Texture {
     pub fn new(tex: ID3D11Texture2D) -> Self {
         Texture {
             tex,
-            desc: RwLock::new(None),
+            desc: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -26,7 +26,7 @@ impl Texture {
     pub fn desc(&self) -> TextureDesc {
         {
             let desc = self.desc.read().unwrap();
-            if self.desc.is_some() {
+            if desc.is_some() {
                 return desc.unwrap();
             }
         }

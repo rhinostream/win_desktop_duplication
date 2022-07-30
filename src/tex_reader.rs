@@ -48,7 +48,7 @@ mod test {
                         if let Err(e) = tex {
                             println!("error: {:?}",e)
                         } else {
-                            let mut tex = tex.unwrap();
+                            let tex = tex.unwrap();
                             reader.get_data(&mut data,&tex).unwrap();
                             let pitch = tex.desc().width as usize *4;
                             println!("pitch: {}",pitch);
