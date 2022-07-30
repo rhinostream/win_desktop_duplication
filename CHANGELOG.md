@@ -1,10 +1,14 @@
 # Change log
 
-# v 0.10.3
+## v 0.10.4
+
 1. removed `mut` requirement on `Texture::desc`.
+2. added support for reading `NV12`,`AYUV` formats in `TextureReader`
+3. fixed major bugs with 0.10.3
 
 ## v 0.10.2
-1. Updated `ColorFormat` enum and added docs for each format. 
+
+2. Updated `ColorFormat` enum and added docs for each format. 
 2. added `as_raw_ref` for all wrapper structs.
 3. Fixed bugs in `0.10.1` and dropped that version
 
