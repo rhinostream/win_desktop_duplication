@@ -47,8 +47,7 @@ async fn main() {
         // this api send one frame per vsync. the frame also has cursor pre drawn
         let tex = dupl.acquire_next_vsync_frame().await;
         if let Ok(tex) = tex {
-            let mut tex = tex;
-            texture_reader.get_data(&mut pic_data, &mut tex);
+            texture_reader.get_data(&mut pic_data, &tex);
             // use pic_data as necessary
         }
     }
@@ -90,8 +89,7 @@ fn main() {
         let tex = dupl.acquire_next_frame_now();
 
         if let Ok(tex) = tex {
-            let mut tex = tex;
-            texture_reader.get_data(&mut pic_data, &mut tex);
+            texture_reader.get_data(&mut pic_data, &tex);
             // use pic_data as necessary
         }
     }

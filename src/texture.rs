@@ -1,5 +1,6 @@
 //! contains convenience wrappers and utility functions for handling directx textures.
 
+use std::sync::{Mutex, RwLock};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_Y410};
 
@@ -9,7 +10,7 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI
 #[derive(Clone)]
 pub struct Texture {
     tex: ID3D11Texture2D,
-    desc: Option<TextureDesc>,
+    desc: RwLock<Option<TextureDesc>>,
 }
 
 impl Texture {
@@ -17,29 +18,34 @@ impl Texture {
     pub fn new(tex: ID3D11Texture2D) -> Self {
         Texture {
             tex,
-            desc: None,
+            desc: RwLock::new(None),
         }
     }
 
     /// retrieve description of current texture
-    pub fn desc(&mut self) -> TextureDesc {
-        if self.desc.is_none() {
-            let mut desc = Default::default();
-            unsafe { self.tex.GetDesc(&mut desc); }
-
-            self.desc = Some(TextureDesc {
-                height: desc.Height,
-                width: desc.Width,
-                format: ColorFormat::from(desc.Format),
-            })
+    pub fn desc(&self) -> TextureDesc {
+        {
+            let desc = self.desc.read().unwrap();
+            if self.desc.is_some() {
+                return desc.unwrap();
+            }
         }
-        self.desc.unwrap()
+        let mut desc = Default::default();
+        unsafe { self.tex.GetDesc(&mut desc); }
+        let mut desc_wr = self.desc.write().unwrap();
+        (*desc_wr) = Some(TextureDesc {
+            height: desc.Height,
+            width: desc.Width,
+            format: ColorFormat::from(desc.Format),
+        });
+        return desc_wr.unwrap();
     }
+}
 
-    /// get reference of internal texture instance
-    pub fn as_raw_ref(&self) -> &ID3D11Texture2D {
-        &self.tex
-    }
+/// get reference of internal texture instance
+pub fn as_raw_ref(&self) -> &ID3D11Texture2D {
+    &self.tex
+}
 }
 
 /// Describes a texture's basic properties.

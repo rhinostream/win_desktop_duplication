@@ -378,16 +378,16 @@ impl DesktopDuplicationApi {
 
         if let Some(resource) = self.state.last_resource.as_ref() {
             self.state.frame_locked = true;
-            let mut new_frame = Texture::new(resource.cast().unwrap());
-            self.ensure_cache_frame(&mut new_frame)?;
+            let new_frame = Texture::new(resource.cast().unwrap());
+            self.ensure_cache_frame(&new_frame)?;
             unsafe { self.d3d_ctx.CopyResource(self.state.frame.as_ref().unwrap().as_raw_ref(), new_frame.as_raw_ref()); }
         }
         if self.state.frame.is_none() {
             return Err(DDApiError::AccessLost);
         }
 
-        let mut cache_frame = self.state.frame.clone().unwrap();
-        self.ensure_cache_cursor_frame(&mut cache_frame)?;
+        let cache_frame = self.state.frame.clone().unwrap();
+        self.ensure_cache_cursor_frame(&cache_frame)?;
         let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
 
         unsafe {
@@ -503,7 +503,7 @@ impl DesktopDuplicationApi {
         }
     }
 
-    fn ensure_cache_frame(&mut self, frame: &mut Texture) -> Result<()> {
+    fn ensure_cache_frame(&mut self, frame: &Texture) -> Result<()> {
         if self.state.frame.is_none() {
             let tex = self.create_texture(frame.desc(), D3D11_USAGE_DEFAULT,
                                           D3D11_BIND_RENDER_TARGET,
@@ -513,7 +513,7 @@ impl DesktopDuplicationApi {
         Ok(())
     }
 
-    fn ensure_cache_cursor_frame(&mut self, frame: &mut Texture) -> Result<()> {
+    fn ensure_cache_cursor_frame(&mut self, frame: &Texture) -> Result<()> {
         if self.state.cursor_frame.is_none() {
             let tex = self.create_texture(frame.desc(), D3D11_USAGE_DEFAULT,
                                           D3D11_BIND_RENDER_TARGET,

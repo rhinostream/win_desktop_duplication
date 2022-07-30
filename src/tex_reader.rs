@@ -49,7 +49,7 @@ mod test {
                             println!("error: {:?}",e)
                         } else {
                             let mut tex = tex.unwrap();
-                            reader.get_data(&mut data,&mut tex).unwrap();
+                            reader.get_data(&mut data,&tex).unwrap();
                             let pitch = tex.desc().width as usize *4;
                             println!("pitch: {}",pitch);
                             for i in 0..4{
@@ -96,14 +96,14 @@ use crate::{DDApiError, Result};
 /// let mut data:Vec<u8> = Vec::new();
 ///
 /// loop {
-///     let mut tex = // some way to acquire texture like DesktopDuplicationApi;
+///     let tex = // some way to acquire texture like DesktopDuplicationApi;
 ///
-///     reader.get_data(&mut data,&mut tex).unwrap();
+///     reader.get_data(&mut data,&tex).unwrap();
 ///
 ///     // use image data here. send it to client etc whatever
 /// }
 /// ```
-pub struct  TextureReader {
+pub struct TextureReader {
     device: ID3D11Device4,
     ctx: ID3D11DeviceContext4,
     tex: Option<Texture>,
@@ -124,7 +124,7 @@ impl TextureReader {
     }
 
     /// retrieve data from texture and store it in vector
-    pub fn get_data(&mut self, vec: &mut Vec<u8>, tex: &mut Texture) -> Result<()> {
+    pub fn get_data(&mut self, vec: &mut Vec<u8>, tex: &Texture) -> Result<()> {
         self.ensure_shape(tex)?;
         unsafe { self.ctx.CopyResource(self.tex.as_mut().unwrap().as_raw_ref(), tex.as_raw_ref()); }
         unsafe { self.ctx.Flush() }
@@ -146,7 +146,7 @@ impl TextureReader {
         Ok(())
     }
 
-    fn ensure_shape(&mut self, tex: &mut Texture) -> Result<()> {
+    fn ensure_shape(&mut self, tex: &Texture) -> Result<()> {
         if self.tex.is_none() || self.tex.as_mut().unwrap().desc() != tex.desc() {
             self.tex = None;
             let mut desc = Default::default();
