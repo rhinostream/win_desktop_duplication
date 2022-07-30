@@ -2,7 +2,8 @@
 
 ## v 0.10.2
 1. Updated `ColorFormat` enum and added docs for each format. 
-2. Fixed bugs in `0.10.1` and dropped that version
+2. added `as_raw_ref` for all wrapper structs.
+3. Fixed bugs in `0.10.1` and dropped that version
 
 ## v 0.10.0
 
