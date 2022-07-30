@@ -40,12 +40,11 @@ impl Texture {
         });
         return desc_wr.unwrap();
     }
-}
 
-/// get reference of internal texture instance
-pub fn as_raw_ref(&self) -> &ID3D11Texture2D {
-    &self.tex
-}
+    /// get reference of internal texture instance
+    pub fn as_raw_ref(&self) -> &ID3D11Texture2D {
+        &self.tex
+    }
 }
 
 /// Describes a texture's basic properties.
