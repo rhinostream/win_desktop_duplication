@@ -1,5 +1,8 @@
 # Change log
 
+# v 0.10.3
+1. removed `mut` requirement on `Texture::desc`.
+
 ## v 0.10.2
 1. Updated `ColorFormat` enum and added docs for each format. 
 2. added `as_raw_ref` for all wrapper structs.
