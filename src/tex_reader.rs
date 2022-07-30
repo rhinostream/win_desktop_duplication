@@ -79,7 +79,7 @@ mod test {
 
 use std::ptr::{copy, null};
 use windows::Win32::Graphics::Direct3D11::{D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_USAGE_STAGING, ID3D11Device4, ID3D11DeviceContext4};
-use crate::texture::Texture;
+use crate::texture::{ColorFormat, Texture};
 use crate::{DDApiError, Result};
 
 
@@ -136,10 +136,24 @@ impl TextureReader {
         let sub_res: D3D11_MAPPED_SUBRESOURCE = sub_res.unwrap();
 
         let desc = tex.desc();
-        let total_size = desc.width * desc.height * 4;
-        vec.resize(total_size as usize, 0);
-        for i in 0..desc.height {
-            unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width * 4) as _), (desc.width * 4) as usize); }
+
+        match desc.format {
+            ColorFormat::ABGR8UNorm | ColorFormat::ARGB8UNorm | ColorFormat::AYUV => {
+                let total_size = desc.width * desc.height * 4;
+                vec.resize(total_size as usize, 0);
+                for i in 0..desc.height {
+                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width * 4) as _), (desc.width * 4) as usize); }
+                }
+            }
+            ColorFormat::NV12 => {
+                let total_size = desc.width * desc.height * 3 / 2;
+                vec.resize(total_size as usize, 0);
+                for i in 0..(3 * desc.height / 2) {
+                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width) as _), (desc.width) as usize); }
+                }
+            }
+
+            _ => unimplemented!()
         }
         unsafe { self.ctx.Unmap(raw_tex, 0); }
 
