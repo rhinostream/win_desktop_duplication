@@ -16,6 +16,7 @@ mod test {
     use tokio::time::interval;
     use crate::outputs::DisplayMode;
     use crate::utils::{co_init, set_process_dpi_awareness};
+    use crate::DDApiError;
 
 
     static INIT: Once = Once::new();
@@ -56,11 +57,17 @@ mod test {
             loop {
                 select! {
                     tex = dupl.acquire_next_vsync_frame().fuse()=>{
-                        if let Err(e) = tex {
-                            println!("error: {:?}",e)
-                        } else {
-                            counter += 1;
-                        };
+                        match &tex {
+                            Err(DDApiError::AccessDenied)| Err(DDApiError::AccessLost)  =>  {
+                                println!("error: {:?}",tex.err())
+                            }
+                            Err(e)=>{
+                                println!("error: {:?}",e)
+                            }
+                            Ok(_)=>{
+                                counter += 1;
+                            }
+                        }
                     },
                     _ = interval.tick().fuse() => {
                         println!("fps: {}",counter);
@@ -276,7 +283,7 @@ impl DesktopDuplicationApi {
         let mut d3d_ctx = None;
 
         let resp = unsafe {
-            D3D11CreateDevice(&adapter.0, D3D_DRIVER_TYPE_UNKNOWN,
+            D3D11CreateDevice(adapter.as_raw_ref(), D3D_DRIVER_TYPE_UNKNOWN,
                               None, D3D11_CREATE_DEVICE_FLAG(0),
                               &feature_levels, D3D11_SDK_VERSION,
                               &mut d3d_device, &mut feature_level,
@@ -292,7 +299,7 @@ impl DesktopDuplicationApi {
     fn create_dupl_output(dev: &ID3D11Device4, output: &Display) -> Result<IDXGIOutputDuplication> {
         let supported_formats = [DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT];
         let device: IDXGIDevice4 = dev.cast().unwrap();
-        let dupl: WinResult<IDXGIOutputDuplication> = unsafe { output.0.DuplicateOutput1(&device, 0, &supported_formats) };
+        let dupl: WinResult<IDXGIOutputDuplication> = unsafe { output.as_raw_ref().DuplicateOutput1(&device, 0, &supported_formats) };
 
         if let Err(err) = dupl {
             return match err.code() {

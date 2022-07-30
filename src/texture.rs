@@ -1,7 +1,7 @@
 //! contains convenience wrappers and utility functions for handling directx textures.
 
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_Y410};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_AYUV, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_FORMAT_P010, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_Y410};
 
 /// Convenient wrapper over ID3D11Texture2D interface to retrieve dimensions, pixel format, read
 /// pixels to system memory or store texture as an image.
@@ -66,6 +66,9 @@ pub enum ColorFormat {
     // regular formats
     /// Packed 8bit per pixel ARGB unsigned normalized int format
     ARGB8UNorm,
+
+    /// Packed 8bit per pixel ABGR unsigned normalized int format
+    ABGR8UNorm,
 
     /// planar 8bit per pixel YUV 4:4:4 format
     YUV444,
@@ -137,6 +140,8 @@ mod gen {
 // implements from trait for both types.
 generate_map!(DXGI_FORMAT ColorFormat {
     (DXGI_FORMAT_R8G8B8A8_UNORM, ColorFormat::ARGB8UNorm),
+
+    (DXGI_FORMAT_B8G8R8A8_UNORM, ColorFormat::ABGR8UNorm),
 
     (DXGI_FORMAT_AYUV, ColorFormat::AYUV),
 
