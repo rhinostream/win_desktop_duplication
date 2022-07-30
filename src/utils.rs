@@ -1,6 +1,6 @@
 use std::ptr::null;
 use windows::core::HSTRING;
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 
 fn find_terminal_idx(content: &[u16]) -> usize {
@@ -27,6 +27,6 @@ pub fn set_process_dpi_awareness() {
 
 pub fn co_init() {
     unsafe {
-        CoInitializeEx(null(), COINIT_APARTMENTTHREADED).unwrap();
+        CoInitializeEx(null(), COINIT_MULTITHREADED).unwrap();
     }
 }

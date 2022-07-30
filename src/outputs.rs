@@ -115,7 +115,7 @@ use crate::utils::convert_u16_to_string;
 /// > *setting or detecting hdr display mode is currently not working.*
 #[repr(transparent)]
 #[derive(Clone)]
-pub struct Display(pub IDXGIOutput6);
+pub struct Display(IDXGIOutput6);
 
 impl Display {
     /// create a new instance of Display.
@@ -202,7 +202,7 @@ impl Display {
         }
     }
 
-    /// get refresh rate signal stream.
+    /// get refresh rate signal stream. check docs of [DisplayVSyncStream] for usage examples.
     pub fn get_vsync_stream(&self) -> DisplayVSyncStream {
         DisplayVSyncStream::new(self.clone())
     }
@@ -215,6 +215,11 @@ impl Display {
         } else {
             Ok(())
         }
+    }
+
+    /// returns internal IDXGIOutput6 reference
+    pub fn as_raw_ref(&self) -> &IDXGIOutput6 {
+        &self.0
     }
 
     // internal function

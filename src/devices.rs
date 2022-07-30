@@ -39,7 +39,7 @@ Adapter is generated using [AdapterFactory].
  */
 #[repr(transparent)]
 #[derive(Clone)]
-pub struct Adapter(pub IDXGIAdapter4);
+pub struct Adapter(IDXGIAdapter4);
 
 unsafe impl Send for Adapter {}
 
@@ -56,6 +56,11 @@ impl Adapter {
     pub fn luid(&self) -> LUID {
         let desc: DXGI_ADAPTER_DESC3 = unsafe { self.0.GetDesc3().unwrap() };
         desc.AdapterLuid
+    }
+
+    /// returns DXGI Adapter reference.
+    pub fn as_raw_ref(&self) -> &IDXGIAdapter4 {
+        &self.0
     }
 
     /// returns an iterator for displays attached to this adapter
@@ -202,6 +207,11 @@ impl AdapterFactory {
     /// reset the iterator status of AdapterFactory
     pub fn reset(&mut self) {
         self.count = 0;
+    }
+
+    /// acquire raw reference to IDXGIAdapterFactory
+    pub fn as_raw_ref(&self) -> &IDXGIFactory4 {
+        &self.fac
     }
 }
 
