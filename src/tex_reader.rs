@@ -145,6 +145,13 @@ impl TextureReader {
                     unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width * 4) as _), (desc.width * 4) as usize); }
                 }
             }
+            ColorFormat::YUV444 => {
+                let total_size = desc.width * desc.height * 3;
+                vec.resize(total_size as usize, 0);
+                for i in 0..(desc.height*3) {
+                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width) as _), (desc.width) as usize); }
+                }
+            }
             ColorFormat::NV12 => {
                 let total_size = desc.width * desc.height * 3 / 2;
                 vec.resize(total_size as usize, 0);

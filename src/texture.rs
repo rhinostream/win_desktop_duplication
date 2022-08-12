@@ -32,12 +32,18 @@ impl Texture {
         }
         let mut desc = Default::default();
         unsafe { self.tex.GetDesc(&mut desc); }
-        let mut desc_wr = self.desc.write().unwrap();
-        (*desc_wr) = Some(TextureDesc {
+        let mut tex_desc = TextureDesc {
             height: desc.Height,
             width: desc.Width,
             format: ColorFormat::from(desc.Format),
-        });
+        };
+        if matches!(tex_desc.format, ColorFormat::YUV444|ColorFormat::YUV444_10bit) {
+            tex_desc.height = tex_desc.height / 3;
+        }
+
+        let mut desc_wr = self.desc.write().unwrap();
+
+        (*desc_wr) = Some(tex_desc);
         return desc_wr.unwrap();
     }
 
