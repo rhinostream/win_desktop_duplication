@@ -3,7 +3,7 @@
 
 use windows::core::{Interface};
 use windows::Win32::Foundation::LUID;
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC3, IDXGIAdapter4, IDXGIFactory4};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory4, IDXGIFactory6};
 
 use crate::outputs::Display;
 use crate::utils::convert_u16_to_string;
@@ -158,7 +158,7 @@ let adapter = fac.get_adapter_by_luid(luid);
 
  */
 pub struct AdapterFactory {
-    fac: IDXGIFactory4,
+    fac: IDXGIFactory6,
     count: u32,
 }
 
@@ -176,7 +176,7 @@ impl AdapterFactory {
     /// Create new instance of AdapterFactory
     pub fn new() -> Self {
         unsafe {
-            let dxgi_factory: IDXGIFactory4 = CreateDXGIFactory2(0).unwrap();
+            let dxgi_factory: IDXGIFactory6 = CreateDXGIFactory2(0).unwrap();
             Self {
                 fac: dxgi_factory,
                 count: 0,
@@ -186,7 +186,7 @@ impl AdapterFactory {
 
     /// retrieve an adapter by index
     pub fn get_adapter_by_idx(&self, idx: u32) -> Option<Adapter> {
-        let adapter = unsafe { self.fac.EnumAdapters1(idx) };
+        let adapter = unsafe { self.fac.EnumAdapterByGpuPreference(idx, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)};
         if adapter.is_ok() {
             Some(Adapter(adapter.unwrap().cast().unwrap()))
         } else {
