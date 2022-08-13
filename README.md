@@ -102,4 +102,4 @@ fn main() {
 - [x] Auto draw cursor onto the frame
 - [x] Handle desktop switch automatically
 - [x] Convenient functions to copy pixel data in cpu memory
-- [ ] Scale and color conversion.
+- [x] Scale and color conversion (checkout [`dxfilter-rs`](https://github.com/rhinostream/dxfilter-rs)).

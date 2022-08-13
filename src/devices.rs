@@ -1,9 +1,9 @@
 //! This module contains [adapter (GPU)][Adapter] and [adapter factories][AdapterFactory] to acquire adapters.
 //! The adapters can be used to enumerate various outputs connected to them.
 
-use windows::core::{Interface};
+use windows::core::{Interface, Result as WinResult};
 use windows::Win32::Foundation::LUID;
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory4, IDXGIFactory6};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory6};
 
 use crate::outputs::Display;
 use crate::utils::convert_u16_to_string;
@@ -186,7 +186,7 @@ impl AdapterFactory {
 
     /// retrieve an adapter by index
     pub fn get_adapter_by_idx(&self, idx: u32) -> Option<Adapter> {
-        let adapter = unsafe { self.fac.EnumAdapterByGpuPreference(idx, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE)};
+        let adapter: WinResult<IDXGIAdapter4> = unsafe { self.fac.EnumAdapterByGpuPreference(idx, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE) };
         if adapter.is_ok() {
             Some(Adapter(adapter.unwrap().cast().unwrap()))
         } else {
@@ -210,7 +210,7 @@ impl AdapterFactory {
     }
 
     /// acquire raw reference to IDXGIAdapterFactory
-    pub fn as_raw_ref(&self) -> &IDXGIFactory4 {
+    pub fn as_raw_ref(&self) -> &IDXGIFactory6 {
         &self.fac
     }
 }
