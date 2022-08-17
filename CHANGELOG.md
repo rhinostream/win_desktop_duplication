@@ -1,4 +1,7 @@
 # Change log
+## v 0.10.6
+1. Fixed a bug when drawing cursor. 
+
 ## v 0.10.5
 1. added YUV444 format texture reading to Texture Reader
 2. adapter factory now retrieves adapters by GPU performance

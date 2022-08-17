@@ -396,7 +396,7 @@ impl DesktopDuplicationApi {
                 cache_frame.as_raw_ref())
         }
 
-        if !self.options.skip_cursor && frame_info.PointerShapeBufferSize != 0 {
+        if !self.options.skip_cursor {
             self.draw_cursor(&cache_cursor_frame)?
         }
         Ok(cache_cursor_frame)
@@ -426,7 +426,7 @@ impl DesktopDuplicationApi {
         if !cursor_present.as_bool()
             || (cursor_info.flags.0 & CURSOR_SHOWING.0 != CURSOR_SHOWING.0)
         {
-            warn!("cursor is absent but attempted to draw");
+            debug!("cursor is absent so not drawing anything");
             return Ok(());
         }
 
