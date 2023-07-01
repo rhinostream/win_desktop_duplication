@@ -123,8 +123,8 @@ impl TextureReader {
         }
     }
 
-    /// retrieve data from texture and store it in vector
-    pub fn get_data(&mut self, vec: &mut Vec<u8>, tex: &Texture) -> Result<()> {
+    /// retrieve data from texture and store it in vector starting at (x, y) with given width and height
+    pub fn get_data(&mut self, vec: &mut Vec<u8>, tex: &Texture, x: u32, y: u32, width: u32, height: u32) -> Result<()> {
         self.ensure_shape(tex)?;
         unsafe { self.ctx.CopyResource(self.tex.as_mut().unwrap().as_raw_ref(), tex.as_raw_ref()); }
         unsafe { self.ctx.Flush() }
@@ -139,24 +139,24 @@ impl TextureReader {
 
         match desc.format {
             ColorFormat::ABGR8UNorm | ColorFormat::ARGB8UNorm | ColorFormat::AYUV => {
-                let total_size = desc.width * desc.height * 4;
+                let total_size = width * height * 4;
                 vec.resize(total_size as usize, 0);
-                for i in 0..desc.height {
-                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width * 4) as _), (desc.width * 4) as usize); }
+                for i in 0..height {
+                    unsafe { copy(sub_res.pData.add(((y + i) * sub_res.RowPitch + x * 4) as usize) as *const u8, vec.as_mut_ptr().add((i * width * 4) as _), (width * 4) as usize); }
                 }
             }
             ColorFormat::YUV444 => {
-                let total_size = desc.width * desc.height * 3;
+                let total_size = width * height * 3;
                 vec.resize(total_size as usize, 0);
-                for i in 0..(desc.height*3) {
-                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width) as _), (desc.width) as usize); }
+                for i in 0..height {
+                    unsafe { copy(sub_res.pData.add(((y + i) * sub_res.RowPitch + x * 3) as usize) as *const u8, vec.as_mut_ptr().add((i * width) as _), width as usize); }
                 }
             }
             ColorFormat::NV12 => {
-                let total_size = desc.width * desc.height * 3 / 2;
+                let total_size = width * height * 3 / 2;
                 vec.resize(total_size as usize, 0);
-                for i in 0..(3 * desc.height / 2) {
-                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width) as _), (desc.width) as usize); }
+                for i in 0..(height * 3 / 2) {
+                    unsafe { copy(sub_res.pData.add(((y + i) * sub_res.RowPitch + x) as usize) as *const u8, vec.as_mut_ptr().add((i * width) as _), width as usize); }
                 }
             }
 
