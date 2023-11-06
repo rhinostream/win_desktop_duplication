@@ -29,6 +29,7 @@ mod test {
 
     #[test]
     fn test_duplication() {
+
         initialize();
 
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -148,9 +149,10 @@ use windows::core::Result as WinResult;
 use windows::Win32::Foundation::{E_INVALIDARG, E_ACCESSDENIED, POINT, GetLastError, BOOL};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Gdi::DeleteObject;
-use windows::Win32::System::StationsAndDesktops::{OpenInputDesktop, SetThreadDesktop};
+use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, OpenInputDesktop, SetThreadDesktop};
 use windows::Win32::System::SystemServices::GENERIC_READ;
-use windows::Win32::UI::WindowsAndMessaging::{CURSOR_SHOWING, CURSORINFO, DF_ALLOWOTHERACCOUNTHOOK, DI_NORMAL, DrawIconEx, GetCursorInfo, GetIconInfo, HCURSOR};
+use windows::Win32::UI::WindowsAndMessaging::{CURSOR_SHOWING, CURSORINFO, DI_NORMAL, DrawIconEx, GetCursorInfo, GetIconInfo, HCURSOR};
+use windows::Win32::System::StationsAndDesktops::DF_ALLOWOTHERACCOUNTHOOK;
 use crate::devices::Adapter;
 use crate::errors::DDApiError;
 use crate::outputs::{Display, DisplayVSyncStream};
@@ -285,9 +287,9 @@ impl DesktopDuplicationApi {
         let resp = unsafe {
             D3D11CreateDevice(adapter.as_raw_ref(), D3D_DRIVER_TYPE_UNKNOWN,
                               None, D3D11_CREATE_DEVICE_FLAG(0),
-                              &feature_levels, D3D11_SDK_VERSION,
-                              &mut d3d_device, &mut feature_level,
-                              &mut d3d_ctx)
+                              Some(&feature_levels), D3D11_SDK_VERSION,
+                              Some(&mut d3d_device), Some(&mut feature_level),
+                              Some(&mut d3d_ctx))
         };
         if resp.is_err() {
             Err(DDApiError::Unexpected(format!("faild d3d11 create device. {:?}", resp)))
@@ -458,7 +460,7 @@ impl DesktopDuplicationApi {
             unsafe { return Err(DDApiError::Unexpected(format!("failed to draw icon. {:?}", GetLastError()))); }
         }
 
-        let _ = unsafe { surface.ReleaseDC(null()) };
+        let _ = unsafe { surface.ReleaseDC(None) };
         Ok(())
     }
 
@@ -541,17 +543,18 @@ impl DesktopDuplicationApi {
             CPUAccessFlags: Default::default(),
             MiscFlags: misc_flag,
         };
-        let result = unsafe { self.d3d_device.CreateTexture2D(&desc, null()) };
+        let mut tex = None;
+        let result = unsafe { self.d3d_device.CreateTexture2D(&desc, None, Some(&mut tex)) };
         if let Err(e) = result {
             Err(DDApiError::Unexpected(format!("failed to create texture. {:?}", e)))
         } else {
-            Ok(Texture::new(result.unwrap()))
+            Ok(Texture::new(tex.unwrap()))
         }
     }
 
     fn switch_thread_desktop() -> Result<()> {
         debug!("trying to switch Thread desktop");
-        let desk = unsafe { OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK as _, true, GENERIC_READ) };
+        let desk = unsafe { OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK as _, true, DESKTOP_ACCESS_FLAGS(GENERIC_READ)) };
         if let Err(err) = desk {
             error!("dint get desktop : {:?}", err);
             return Err(DDApiError::AccessDenied);

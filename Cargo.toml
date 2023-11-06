@@ -1,6 +1,6 @@
 [package]
 name = "win_desktop_duplication"
-version = "0.10.6"
+version = "0.10.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
@@ -31,14 +31,14 @@ default-target = "x86_64-pc-windows-msvc"
 targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
 
 [dev-dependencies]
-env_logger = "0.9.0"
+env_logger = "0.10.0"
 
 [dependencies]
-futures = "0.3.21"
+futures = "0.3.26"
 log = "0.4.17"
 
 [dependencies.tokio]
-version = "1.20.1"
+version = "1.26.0"
 features = [
     "rt",
     "time",
@@ -46,7 +46,7 @@ features = [
 ]
 
 [dependencies.windows]
-version = "0.39.0"
+version = "0.44.0"
 features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D11",

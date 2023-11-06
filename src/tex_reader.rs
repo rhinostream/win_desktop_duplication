@@ -129,12 +129,10 @@ impl TextureReader {
         unsafe { self.ctx.CopyResource(self.tex.as_mut().unwrap().as_raw_ref(), tex.as_raw_ref()); }
         unsafe { self.ctx.Flush() }
         let raw_tex = self.tex.as_mut().unwrap().as_raw_ref();
-        let sub_res = unsafe { self.ctx.Map(raw_tex, 0, D3D11_MAP_READ, 0) };
-        if sub_res.is_err() {
-            return Err(DDApiError::Unexpected(format!("failed to map to cpu {:?}", sub_res)));
+        let mut sub_res = D3D11_MAPPED_SUBRESOURCE::default();
+        if let Err(e) = unsafe { self.ctx.Map(raw_tex, 0, D3D11_MAP_READ, 0, Some(&mut sub_res)) } {
+            return Err(DDApiError::Unexpected(format!("failed to map to cpu {:?}", e)));
         }
-        let sub_res: D3D11_MAPPED_SUBRESOURCE = sub_res.unwrap();
-
         let desc = tex.desc();
 
         match desc.format {
@@ -148,7 +146,7 @@ impl TextureReader {
             ColorFormat::YUV444 => {
                 let total_size = desc.width * desc.height * 3;
                 vec.resize(total_size as usize, 0);
-                for i in 0..(desc.height*3) {
+                for i in 0..(desc.height * 3) {
                     unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width) as _), (desc.width) as usize); }
                 }
             }
@@ -177,9 +175,10 @@ impl TextureReader {
             desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
             desc.MiscFlags = Default::default();
 
-            let new_tex = unsafe { self.device.CreateTexture2D(&desc, null()) };
-            if new_tex.is_err() {
-                return Err(DDApiError::Unexpected(format!("failed to create texture. {:?}", new_tex)));
+            let mut new_tex = None;
+
+            if let Err(e) = unsafe { self.device.CreateTexture2D(&desc, None, Some(&mut new_tex)) } {
+                return Err(DDApiError::Unexpected(format!("failed to create texture. {:?}", e)));
             }
             self.tex = Some(Texture::new(new_tex.unwrap()))
         }

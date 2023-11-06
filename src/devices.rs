@@ -3,7 +3,7 @@
 
 use windows::core::{Interface, Result as WinResult};
 use windows::Win32::Foundation::LUID;
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory6};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory6};
 
 use crate::outputs::Display;
 use crate::utils::convert_u16_to_string;
@@ -48,13 +48,15 @@ unsafe impl Sync for Adapter {}
 impl Adapter {
     /// Returns name of the adapter
     pub fn name(&self) -> String {
-        let desc: DXGI_ADAPTER_DESC3 = unsafe { self.0.GetDesc3().unwrap() };
+        let mut desc: DXGI_ADAPTER_DESC3 = Default::default();
+        unsafe { self.0.GetDesc3(&mut desc).unwrap() };
         convert_u16_to_string(&desc.Description)
     }
 
     /// returns LUID of the Adapter.
     pub fn luid(&self) -> LUID {
-        let desc: DXGI_ADAPTER_DESC3 = unsafe { self.0.GetDesc3().unwrap() };
+        let mut desc: DXGI_ADAPTER_DESC3 = Default::default();
+        unsafe { self.0.GetDesc3(&mut desc).unwrap() };
         desc.AdapterLuid
     }
 
