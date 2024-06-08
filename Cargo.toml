@@ -31,7 +31,7 @@ default-target = "x86_64-pc-windows-msvc"
 targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
 
 [dev-dependencies]
-env_logger = "0.10.0"
+env_logger = "0.11.3"
 
 [dependencies]
 futures = "0.3.26"
@@ -46,7 +46,7 @@ features = [
 ]
 
 [dependencies.windows]
-version = "0.44.0"
+version = "0.57.0"
 features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D11",

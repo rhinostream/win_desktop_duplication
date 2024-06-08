@@ -1,4 +1,3 @@
-use std::ptr::null;
 use windows::core::HSTRING;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
@@ -20,7 +19,7 @@ pub fn convert_u16_to_string(data: &[u16]) -> String {
 pub fn set_process_dpi_awareness() {
     unsafe {
         SetProcessDpiAwarenessContext(
-            Some(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2),
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
         );
     }
 }

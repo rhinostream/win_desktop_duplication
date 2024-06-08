@@ -1,13 +1,22 @@
 //! Provides convenient tools for handling directx textures. [`TextureReader`][TextureReader] can be used to read
 //! textures.
 
+use std::ptr::copy;
+
+use windows::Win32::Graphics::Direct3D11::{D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_USAGE_STAGING, ID3D11Device4, ID3D11DeviceContext4};
+
+use crate::{DDApiError, Result};
+use crate::texture::{ColorFormat, Texture};
+
 #[cfg(test)]
 mod test {
     use std::sync::Once;
     use std::time::Duration;
-    use futures::{select, FutureExt};
+
+    use futures::{FutureExt, select};
     use log::LevelFilter::Debug;
     use tokio::time::interval;
+
     use crate::{co_init, DesktopDuplicationApi, set_process_dpi_awareness};
     use crate::devices::AdapterFactory;
     use crate::tex_reader::TextureReader;
@@ -76,12 +85,6 @@ mod test {
         });
     }
 }
-
-use std::ptr::{copy, null};
-use windows::Win32::Graphics::Direct3D11::{D3D11_CPU_ACCESS_READ, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_USAGE_STAGING, ID3D11Device4, ID3D11DeviceContext4};
-use crate::texture::{ColorFormat, Texture};
-use crate::{DDApiError, Result};
-
 
 /// Tool for reading GPU only directx textures.
 ///
@@ -172,7 +175,7 @@ impl TextureReader {
             unsafe { tex.as_raw_ref().GetDesc(&mut desc) };
             desc.Usage = D3D11_USAGE_STAGING;
             desc.BindFlags = Default::default();
-            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as _;
             desc.MiscFlags = Default::default();
 
             let mut new_tex = None;

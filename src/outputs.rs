@@ -3,15 +3,36 @@
 //! * [Display] - basic wrapper for output with options to change resolution and refresh-rates
 //! * [DisplayVSyncStream] - provides async [Stream][futures::Stream] that ticks at every
 //!                          display vsync event.
+use std::cmp::max;
+use std::ffi::CString;
+use std::mem::{size_of, swap};
+use std::pin::Pin;
+use std::ptr::{null, null_mut};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::task::{Context, Poll, Waker};
+use std::thread::spawn;
+
+use futures::Stream;
+use log::{error, trace};
+use windows::core::{PCSTR, Result as WinResult};
+use windows::Win32::Graphics::Dxgi::{DXGI_MODE_DESC1, DXGI_OUTPUT_DESC1, IDXGIOutput6};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM};
+use windows::Win32::Graphics::Gdi::{CDS_TYPE, ChangeDisplaySettingsExA, DEVMODE_DISPLAY_ORIENTATION, DEVMODEA, DISP_CHANGE_SUCCESSFUL, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_FLAGS, EnumDisplaySettingsExA};
+
+use crate::errors::DDApiError;
+use crate::utils::convert_u16_to_string;
+
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::thread::sleep;
     use std::time::Duration;
+
     use futures::StreamExt;
     use tokio::runtime::Builder;
     use tokio::time;
+
     use crate::devices::AdapterFactory;
     use crate::outputs::{DisplayMode, DisplayOrientation};
 
@@ -94,24 +115,6 @@ mod test {
 }
 
 
-use std::cmp::max;
-use std::ffi::{CString};
-use std::mem::{size_of, swap};
-use std::pin::Pin;
-use std::ptr::{null, null_mut};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
-use std::task::{Context, Poll, Waker};
-use std::thread::{spawn};
-use futures::Stream;
-use log::{error, trace};
-use windows::Win32::Graphics::Dxgi::{DXGI_MODE_DESC1, DXGI_OUTPUT_DESC1, IDXGIOutput6};
-use windows::core::{PCSTR, Result as WinResult};
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM};
-use windows::Win32::Graphics::Gdi::{CDS_TYPE, ChangeDisplaySettingsExA, DEVMODE_DISPLAY_ORIENTATION, DEVMODEA, DISP_CHANGE_SUCCESSFUL, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsExA};
-use crate::errors::DDApiError;
-use crate::utils::convert_u16_to_string;
-
-
 /// Display represents a monitor connected to a single [Adapter][crate::devices::Adapter] (GPU). this instance is
 /// used to create a output duplication instance, change display mode and few other options.
 ///
@@ -166,7 +169,7 @@ impl Display {
             display_mode.Anonymous1.Anonymous2.dmDisplayOrientation = mode.orientation.into();
         }
 
-        display_mode.dmFields |= (DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL | DM_DISPLAYORIENTATION);
+        display_mode.dmFields |= DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL | DM_DISPLAYORIENTATION;
 
 
         let resp = unsafe { ChangeDisplaySettingsExA(PCSTR(name.as_ptr() as _), Some(&display_mode), None, CDS_TYPE(0), None) };
@@ -188,7 +191,7 @@ impl Display {
             dmDriverExtra: 0,
             ..Default::default()
         };
-        let success = unsafe { EnumDisplaySettingsExA(PCSTR(name.as_c_str().as_ptr() as _), ENUM_CURRENT_SETTINGS, &mut mode, 0) };
+        let success = unsafe { EnumDisplaySettingsExA(PCSTR(name.as_c_str().as_ptr() as _), ENUM_CURRENT_SETTINGS, &mut mode, ENUM_DISPLAY_SETTINGS_FLAGS(0)) };
         if !success.as_bool() {
             Err(DDApiError::Unexpected("Failed to retrieve display settings for output".to_string()))
         } else {
