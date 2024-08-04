@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::task::{Context, Poll, Waker};
-use std::thread::spawn;
+use std::thread::{JoinHandle, spawn};
 
 use futures::Stream;
 use log::{error, trace};
@@ -93,7 +93,7 @@ mod test {
             let counter = counter2;
 
             let mut s = disp.get_vsync_stream();
-            while let Some(()) = s.next().await {
+            while let Some(Ok(())) = s.next().await {
                 let _ = counter.fetch_add(1, Ordering::Release);
             }
         });
@@ -351,8 +351,8 @@ pub struct DisplayMode {
 /// }
 /// ```
 pub struct DisplayVSyncStream {
-    sync_rx: Receiver<Result<(), DDApiError>>,
-    thread_fn: Option<Box<dyn FnOnce(Waker)>>,
+    sync_rx: tokio::sync::mpsc::Receiver<Result<(), DDApiError>>,
+    thread_handle: Option<Box<JoinHandle<()>>>,
 }
 
 unsafe impl Send for DisplayVSyncStream {}
@@ -362,65 +362,35 @@ unsafe impl Sync for DisplayVSyncStream {}
 impl DisplayVSyncStream {
     /// generates a new sync stream for a given display.
     pub fn new(output: Display) -> Self {
-        let (sync_tx, sync_rx) = channel::<Result<(), DDApiError>>();
+        let (sync_tx, sync_rx) = tokio::sync::mpsc::channel::<Result<(), DDApiError>>(1);
         // the thread auto stops when this object goes out of scope.
-        let thread_fn = move |wake: Waker| {
-            spawn(move || {
-                let output = output;
-                let wake = wake;
-                loop {
-                    let mut out = Ok(());
-                    let res = unsafe { output.0.WaitForVBlank() };
-                    if let Err(e) = res {
-                        out = Err(DDApiError::Unexpected(format!("{:?}", e)));
-                    }
-                    wake.wake_by_ref();
-                    let err = sync_tx.send(out);
-                    if err.is_err() {
-                        trace!("exiting display sync wait thread");
-                        return;
-                    }
+        let thread_handle = spawn(move || {
+            let output = output;
+            loop {
+                let mut out = Ok(());
+                let res = unsafe { output.0.WaitForVBlank() };
+                if let Err(e) = res {
+                    out = Err(DDApiError::Unexpected(format!("{:?}", e)));
                 }
-            });
-        };
+                let err = sync_tx.blocking_send(out);
+                if err.is_err() {
+                    trace!("exiting display sync wait thread");
+                    return;
+                }
+            }
+        });
 
         Self {
             sync_rx,
-            thread_fn: Some(Box::new(thread_fn)),
+            thread_handle: Some(Box::new(thread_handle)),
         }
     }
 }
 
 impl Stream for DisplayVSyncStream {
-    type Item = ();
+    type Item = Result<(), DDApiError>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut out = Poll::Pending;
-        let sync_signal = self.sync_rx.try_recv();
-
-        match sync_signal {
-            Err(TryRecvError::Empty) => {
-                // nosignal is pending. so nothing to do. only once we spawn the thread that
-                // waits on display refresh rate and sends signals.
-                if self.thread_fn.is_some() {
-                    let self_mut = unsafe { self.get_unchecked_mut() };
-                    let mut f: Option<Box<dyn FnOnce(Waker)>> = None;
-                    swap(&mut self_mut.thread_fn, &mut f);
-                    let f = f.unwrap();
-                    f(cx.waker().clone())
-                }
-            }
-            Err(TryRecvError::Disconnected) => {
-                panic!("DisplayVSyncStream sync thread quit unexpectedly.")
-            }
-            Ok(Err(e)) => {
-                error!("DisplayVSyncStream received a sync error. Maybe monitor disconnected? {:?}", e);
-                out = Poll::Ready(None);
-            }
-            Ok(Ok(())) => {
-                out = Poll::Ready(Some(()));
-            }
-        }
-        out
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.sync_rx.poll_recv(cx)
     }
 }

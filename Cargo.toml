@@ -1,6 +1,6 @@
 [package]
 name = "win_desktop_duplication"
-version = "0.10.8"
+version = "0.10.9"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Krishna Chaitanya <kittuov@gmail.com>"]
@@ -42,7 +42,8 @@ version = "1.26.0"
 features = [
     "rt",
     "time",
-    "macros"
+    "macros",
+    "sync"
 ]
 
 [dependencies.windows]
