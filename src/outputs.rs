@@ -10,7 +10,8 @@ use std::pin::Pin;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::task::{Context, Poll, Waker};
-use std::thread::{JoinHandle, spawn};
+use std::thread::{JoinHandle, sleep, spawn};
+use std::time::Duration;
 
 use futures::Stream;
 use log::{error, trace};
@@ -369,6 +370,7 @@ impl DisplayVSyncStream {
             loop {
                 let mut out = Ok(());
                 let res = unsafe { output.0.WaitForVBlank() };
+                sleep(Duration::from_millis(6));
                 if let Err(e) = res {
                     out = Err(DDApiError::Unexpected(format!("{:?}", e)));
                 }

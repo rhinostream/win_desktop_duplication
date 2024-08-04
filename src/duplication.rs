@@ -40,7 +40,7 @@ mod test {
     use log::LevelFilter::Debug;
     use tokio::time::interval;
 
-    use crate::DDApiError;
+    use crate::{DDApiError, DuplicationApiOptions};
     use crate::devices::AdapterFactory;
     use crate::duplication::DesktopDuplicationApi;
     use crate::outputs::DisplayMode;
@@ -69,6 +69,9 @@ mod test {
             let output = adapter.get_display_by_idx(0).unwrap();
             let mut dupl = DesktopDuplicationApi::new(adapter, output.clone()).unwrap();
             let curr_mode = output.get_current_display_mode().unwrap();
+            dupl.configure(DuplicationApiOptions {
+                skip_cursor: true
+            });
             let new_mode = DisplayMode {
                 width: 2560,
                 height: 1440,
@@ -380,7 +383,9 @@ impl DesktopDuplicationApi {
             debug!("got fresh resource. accumulated {} frames",frame_info.AccumulatedFrames);
             self.state.frame_locked = true;
             let new_frame = Texture::new(resource.cast().unwrap());
-            self.ensure_cache_frame(&new_frame)?;
+            self.ensure_cache_frame(&new_frame).inspect_err(|_| {
+                self.release_locked_frame();
+            })?;
             unsafe { self.d3d_ctx.CopyResource(self.state.frame.as_ref().unwrap().as_raw_ref(), new_frame.as_raw_ref()); }
             self.release_locked_frame();
         } else {
@@ -391,19 +396,22 @@ impl DesktopDuplicationApi {
         }
 
         let cache_frame = self.state.frame.clone().unwrap();
-        self.ensure_cache_cursor_frame(&cache_frame)?;
-        let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
-
-        unsafe {
-            self.d3d_ctx.CopyResource(
-                cache_cursor_frame.as_raw_ref(),
-                cache_frame.as_raw_ref())
-        }
 
         if !self.options.skip_cursor {
-            self.draw_cursor(&cache_cursor_frame)?
+            self.ensure_cache_cursor_frame(&cache_frame)?;
+            let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
+
+            unsafe {
+                self.d3d_ctx.CopyResource(
+                    cache_cursor_frame.as_raw_ref(),
+                    cache_frame.as_raw_ref())
+            }
+
+            self.draw_cursor(&cache_cursor_frame)?;
+            Ok(cache_cursor_frame)
+        } else {
+            Ok(cache_frame)
         }
-        Ok(cache_cursor_frame)
     }
 
 
