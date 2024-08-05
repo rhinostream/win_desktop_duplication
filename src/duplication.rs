@@ -73,8 +73,8 @@ mod test {
                 skip_cursor: true
             });
             let new_mode = DisplayMode {
-                width: 2560,
-                height: 1440,
+                width: 1920,
+                height: 1080,
                 orientation: Default::default(),
                 refresh_num: curr_mode.refresh_num,
                 refresh_den: curr_mode.refresh_den,
@@ -84,6 +84,7 @@ mod test {
             let mut counter = 0;
             let mut secs = 0;
             let mut interval = interval(Duration::from_secs(1));
+            output.set_display_mode(&new_mode).unwrap();
             loop {
                 select! {
                     tex = dupl.acquire_next_vsync_frame().fuse()=>{
@@ -104,6 +105,7 @@ mod test {
                         counter = 0;
                         secs+=1;
                         if secs == 5 {
+                            output.set_display_mode(&curr_mode).unwrap();
                             println!("5 secs");
                         } else if secs ==10 {
                             break;
@@ -274,8 +276,7 @@ impl DesktopDuplicationApi {
         let res = self.acquire_next_frame_now();
         if res.is_err() {
             trace!("something went wrong with acquiring next frame. probably desktop duplication \
-            instance failed. waiting for 200ms");
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            instance failed");
         }
         res
     }
