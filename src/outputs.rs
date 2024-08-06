@@ -370,7 +370,9 @@ impl DisplayVSyncStream {
             loop {
                 let mut out = Ok(());
                 let res = unsafe { output.0.WaitForVBlank() };
-                sleep(Duration::from_millis(6));
+
+                // extra sleep to ensure the image is processed for desktop duplication.
+                sleep(Duration::from_millis(2));
                 if let Err(e) = res {
                     out = Err(DDApiError::Unexpected(format!("{:?}", e)));
                 }
