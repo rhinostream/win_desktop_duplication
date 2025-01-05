@@ -5,19 +5,22 @@
 //! For more information on how to use check [DesktopDuplicationApi]
 
 use std::mem::size_of;
+use std::ops::Add;
 use std::ptr::null;
+use std::thread;
 use std::time::Duration;
 
 use futures::StreamExt;
 use log::{debug, error, trace, warn};
+use tokio::task::spawn_blocking;
 use tokio::time;
-use tokio::time::{Interval, MissedTickBehavior, sleep};
+use tokio::time::{Instant, Interval, MissedTickBehavior, sleep};
 use windows::core::Interface;
 use windows::core::Result as WinResult;
 use windows::Win32::Foundation::{BOOL, E_ACCESSDENIED, E_INVALIDARG, GENERIC_READ, GetLastError, POINT};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1};
 use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device4, ID3D11DeviceContext4};
-use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL, DXGI_ERROR_SESSION_DISCONNECTED, DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT, IDXGIDevice4, IDXGIOutputDuplication, IDXGIResource, IDXGISurface1};
+use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL, DXGI_ERROR_MORE_DATA, DXGI_ERROR_SESSION_DISCONNECTED, DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO, IDXGIDevice4, IDXGIOutputDuplication, IDXGIResource, IDXGISurface1};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Gdi::DeleteObject;
 use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, OpenInputDesktop, SetThreadDesktop};
@@ -72,19 +75,20 @@ mod test {
             dupl.configure(DuplicationApiOptions {
                 skip_cursor: true
             });
-            let new_mode = DisplayMode {
-                width: 1920,
-                height: 1080,
-                orientation: Default::default(),
-                refresh_num: curr_mode.refresh_num,
-                refresh_den: curr_mode.refresh_den,
-                hdr: false,
-            };
+            // let new_mode = DisplayMode {
+            //     width: 1920,
+            //     height: 1080,
+            //     orientation: Default::default(),
+            //     refresh_num: curr_mode.refresh_num,
+            //     refresh_den: curr_mode.refresh_den,
+            //     hdr: false,
+            // };
 
             let mut counter = 0;
             let mut secs = 0;
             let mut interval = interval(Duration::from_secs(1));
-            output.set_display_mode(&new_mode).unwrap();
+            // output.set_display_mode(&new_mode).unwrap();
+            let vsync_stream = output.get_vsync_stream();
             loop {
                 select! {
                     tex = dupl.acquire_next_vsync_frame().fuse()=>{
@@ -142,7 +146,7 @@ mod test {
         let instant = Instant::now();
         loop {
             let _ = output.wait_for_vsync();
-            let tex = dupl.acquire_next_frame_now();
+            let tex = dupl.acquire_next_frame(Duration::from_millis(1));
             if let Err(e) = tex {
                 println!("error: {:?}", e)
             } else {
@@ -215,6 +219,70 @@ pub struct DesktopDuplicationApi {
 
     state: DuplicationState,
 
+    last_frame_info: Option<DXGI_OUTDUPL_FRAME_INFO>,
+    last_cursor_shape: Option<CursorShape>,
+}
+#[repr(C)]
+#[derive(Clone, Debug, Default)]
+pub struct FrameInfo {
+    pub last_present_time: i64,
+    pub last_mouse_update_time: i64,
+    pub accumulated_frames: u32,
+    pub protected_content_masked_out: bool,
+    pub pointer_info: CursorInfo,
+}
+
+#[repr(C)]
+#[derive(Clone, Debug, Default)]
+pub struct CursorInfo {
+    pub visible: bool,
+    pub updated: bool,
+    pub position: CursorPos,
+}
+
+
+#[repr(C)]
+#[derive(Default, Clone, Debug)]
+pub struct CursorPos {
+    pub cx: i32,
+    pub cy: i32,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct CursorShape {
+    pub buffer: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub pitch: u32,
+    pub kind: CursorKind,
+    pub hotspot: CursorPos,
+}
+
+#[derive(Default, Clone, Debug)]
+pub enum CursorKind {
+    #[default]
+    SingleBit,
+    ARGB,
+    Masked,
+}
+
+impl From<u32> for CursorKind {
+    fn from(value: u32) -> Self {
+        match value {
+            0x1 => {
+                Self::SingleBit
+            }
+            0x2 => {
+                Self::ARGB
+            }
+            0x4 => {
+                Self::Masked
+            }
+            _ => {
+                Self::ARGB
+            }
+        }
+    }
 }
 
 unsafe impl Send for DesktopDuplicationApi {}
@@ -247,6 +315,8 @@ impl DesktopDuplicationApi {
             dupl: Some(dupl),
             options: Default::default(),
             state: Default::default(),
+            last_frame_info: None,
+            last_cursor_shape: None,
         })
     }
 
@@ -266,12 +336,16 @@ impl DesktopDuplicationApi {
     ///
     /// ## Non-recoverable errors
     /// * [DDApiError::Unexpected] - this type of error cant be recovered from. the application should
-    /// drop the struct and re create a new instance.
+    /// drop the struct and re-create a new instance.
     pub async fn acquire_next_vsync_frame(&mut self) -> Result<Texture> {
         // wait for vsync
         if (self.vsync_stream.next().await).is_some_and(|r| r.is_err()) {
             return Err(DDApiError::Unexpected("DisplayVSyncStream failed unexpectedly".to_owned()));
         }
+        // adding 2 ms sleep to ensure frame would be available
+        // this is moved from vsync code for better control
+        // sleep(Duration::from_millis(2)).await;
+
         // acquire next_frame
         let res = self.acquire_next_frame_now();
         if res.is_err() {
@@ -281,7 +355,7 @@ impl DesktopDuplicationApi {
         res
     }
 
-    fn create_device(adapter: &Adapter) -> Result<(ID3D11Device4, ID3D11DeviceContext4)> {
+    pub fn create_device(adapter: &Adapter) -> Result<(ID3D11Device4, ID3D11DeviceContext4)> {
         let feature_levels = [D3D_FEATURE_LEVEL_11_1];
         let mut feature_level: D3D_FEATURE_LEVEL = Default::default();
         let mut d3d_device = None;
@@ -346,11 +420,16 @@ impl DesktopDuplicationApi {
     /// * [DDApiError::Unexpected] - this type of error cant be recovered from. the application should
     /// drop the struct and re create a new instance.
     pub fn acquire_next_frame_now(&mut self) -> Result<Texture> {
+        self.acquire_next_frame(Duration::from_millis(0))
+    }
+
+    pub fn acquire_next_frame(&mut self, timeout: Duration) -> Result<Texture> {
         let mut frame_info = Default::default();
 
         if self.dupl.is_none() {
             self.reacquire_dup()?;
         }
+        // self.release_locked_frame();
         let dupl = self.dupl.as_ref().unwrap();
         let status = unsafe { dupl.AcquireNextFrame(0, &mut frame_info, &mut self.state.last_resource) };
         if let Err(e) = status {
@@ -377,6 +456,13 @@ impl DesktopDuplicationApi {
                     return Err(DDApiError::Unexpected(format!("acquire frame failed {:?}", e)));
                 }
             }
+        } else {
+            self.last_frame_info = Some(frame_info);
+            if frame_info.PointerShapeBufferSize != 0 {
+                let mut shape = CursorShape::default();
+                self._get_cursor_shape(&mut shape)?;
+                self.last_cursor_shape = Some(shape);
+            }
         }
 
 
@@ -388,13 +474,15 @@ impl DesktopDuplicationApi {
                 self.release_locked_frame();
             })?;
             unsafe { self.d3d_ctx.CopyResource(self.state.frame.as_ref().unwrap().as_raw_ref(), new_frame.as_raw_ref()); }
-            self.release_locked_frame();
         } else {
             debug!("no fresh resource. accumulated {} frames",frame_info.AccumulatedFrames);
         }
         if self.state.frame.is_none() {
             return Err(DDApiError::AccessLost);
         }
+
+
+        self.release_locked_frame();
 
         let cache_frame = self.state.frame.clone().unwrap();
 
@@ -412,6 +500,68 @@ impl DesktopDuplicationApi {
             Ok(cache_cursor_frame)
         } else {
             Ok(cache_frame)
+        }
+    }
+
+    /// This function returns information about the last frame and provides userful information
+    /// for properly representing the cursor.
+    pub fn get_last_frame_info(&self) -> FrameInfo {
+        let last_frame = &self.last_frame_info.unwrap_or(Default::default());
+        return FrameInfo {
+            last_present_time: last_frame.LastPresentTime,
+            last_mouse_update_time: last_frame.LastMouseUpdateTime,
+            accumulated_frames: last_frame.AccumulatedFrames,
+            protected_content_masked_out: last_frame.ProtectedContentMaskedOut.as_bool(),
+            pointer_info: CursorInfo {
+                visible: last_frame.PointerPosition.Visible.as_bool(),
+                updated: last_frame.PointerShapeBufferSize != 0,
+                position: CursorPos { cx: last_frame.PointerPosition.Position.x, cy: last_frame.PointerPosition.Position.y },
+            },
+        };
+    }
+
+    /// This function returns information about the last frame and provides userful information
+    /// for properly representing the cursor.
+    fn _get_cursor_shape(&self, shape: &mut CursorShape) -> Result<()> {
+        let last_frame = self.last_frame_info.as_ref().unwrap();
+        if shape.buffer.capacity() < last_frame.PointerShapeBufferSize as _ {
+            shape.buffer = Vec::with_capacity(last_frame.PointerShapeBufferSize as _)
+        }
+        let dupl = self.dupl.as_ref().ok_or(DDApiError::Unexpected("duplication instance doesn't exist??".to_owned()))?;
+
+        let mut shape_info: DXGI_OUTDUPL_POINTER_SHAPE_INFO = Default::default();
+        let mut required_size: u32 = 0;
+        let mut result = unsafe { dupl.GetFramePointerShape(last_frame.PointerShapeBufferSize, shape.buffer.as_mut_ptr() as _, &mut required_size, &mut shape_info) };
+        if matches!(result.clone().map_err(|err|{
+            return err.code()
+        }), Err(DXGI_ERROR_MORE_DATA)) {
+            shape.buffer = Vec::with_capacity(required_size as _);
+            unsafe { result = dupl.GetFramePointerShape(last_frame.PointerShapeBufferSize, shape.buffer.as_mut_ptr() as _, &mut required_size, &mut shape_info); }
+        }
+        if result.is_err() {
+            return Err(DDApiError::Unexpected(format!("{:?}", &result)));
+        } else {
+            unsafe { shape.buffer.set_len(last_frame.PointerShapeBufferSize as _) };
+            shape.height = shape_info.Height;
+            shape.width = shape_info.Width;
+            shape.pitch = shape_info.Pitch;
+            shape.kind = shape_info.Type.into();
+            shape.hotspot = CursorPos {
+                cx: shape_info.HotSpot.x,
+                cy: shape_info.HotSpot.y,
+            }
+        };
+
+        return Ok(());
+    }
+    /// This function returns information about the last frame and provides userful information
+    /// for properly representing the cursor.
+    pub fn get_cursor_shape(&self, shape: &mut CursorShape) -> Result<()> {
+        if let Some(cshape) = &self.last_cursor_shape {
+            *shape = cshape.clone();
+            Ok(())
+        } else {
+            Err(DDApiError::BadParam("requested before frame!!!".to_owned()))
         }
     }
 
@@ -449,7 +599,6 @@ impl DesktopDuplicationApi {
             self.state.hotspot_x = point.x as _;
             self.state.hotspot_y = point.y as _;
         }
-
         let surface: IDXGISurface1 = tex.as_raw_ref().cast().unwrap();
         let hdc = unsafe { surface.GetDC(BOOL::from(false)) };
         if let Err(err) = hdc {

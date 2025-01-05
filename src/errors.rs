@@ -4,6 +4,7 @@ pub enum DDApiError {
     Unsupported,
     AccessDenied,
     AccessLost,
+    CursorNotAvailable,
     BadParam(String),
     Unexpected(String),
 }
