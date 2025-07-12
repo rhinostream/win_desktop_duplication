@@ -6,20 +6,24 @@
 
 use std::mem::size_of;
 use std::ops::Add;
+use std::pin::Pin;
 use std::ptr::null;
 use std::thread;
 use std::time::Duration;
 
 use futures::StreamExt;
 use log::{debug, error, trace, warn};
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::spawn_blocking;
 use tokio::time;
 use tokio::time::{Instant, Interval, MissedTickBehavior, sleep};
+use windows::core::imp::HANDLE;
 use windows::core::Interface;
 use windows::core::Result as WinResult;
 use windows::Win32::Foundation::{BOOL, E_ACCESSDENIED, E_INVALIDARG, GENERIC_READ, GetLastError, POINT};
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1};
-use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device4, ID3D11DeviceContext4};
+use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device4, ID3D11DeviceContext4, ID3D11Device, ID3D11DeviceContext};
 use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL, DXGI_ERROR_MORE_DATA, DXGI_ERROR_SESSION_DISCONNECTED, DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO, IDXGIDevice4, IDXGIOutputDuplication, IDXGIResource, IDXGISurface1};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Gdi::DeleteObject;
@@ -213,7 +217,6 @@ pub struct DesktopDuplicationApi {
     d3d_ctx: ID3D11DeviceContext4,
     output: Display,
     vsync_stream: DisplayVSyncStream,
-    dupl: Option<IDXGIOutputDuplication>,
 
     options: DuplicationApiOptions,
 
@@ -285,6 +288,67 @@ impl From<u32> for CursorKind {
     }
 }
 
+struct DesktopDuplStream {
+    d3d_device: ID3D11Device,
+    d3d_ctx: ID3D11DeviceContext,
+    output: Display,
+    dupl: Option<IDXGIOutputDuplication>
+}
+
+impl DesktopDuplStream {
+    fn create_dupl_output(dev: &ID3D11Device4, output: &Display) -> Result<IDXGIOutputDuplication> {
+        let supported_formats = [DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT];
+        let device: IDXGIDevice4 = dev.cast().unwrap();
+        let dupl: WinResult<IDXGIOutputDuplication> = unsafe { output.as_raw_ref().DuplicateOutput1(&device, 0, &supported_formats) };
+
+        if let Err(err) = dupl {
+            return match err.code() {
+                E_INVALIDARG => {
+                    Err(DDApiError::BadParam(format!("failed to create duplicate output. {:?}", err)))
+                }
+                E_ACCESSDENIED => {
+                    Err(DDApiError::AccessDenied)
+                }
+                DXGI_ERROR_UNSUPPORTED => {
+                    Err(DDApiError::Unsupported)
+                }
+                DXGI_ERROR_SESSION_DISCONNECTED => {
+                    Err(DDApiError::Disconnected)
+                }
+                _ => {
+                    Err(DDApiError::Unexpected(err.to_string()))
+                }
+            };
+        }
+        Ok(dupl.unwrap())
+    }
+
+    pub fn new_with(d3d_device: ID3D11Device, d3d_ctx: ID3D11DeviceContext, output: Display) -> Result<Self> {
+        let dupl = Self::create_dupl_output(&d3d_device.cast().unwrap(),&output)?;
+        Ok(Self{
+            d3d_ctx,
+            d3d_device,
+            output,
+            dupl: Some(dupl),
+        })
+    }
+
+    pub fn start(self)  -> (std::sync::mpsc::Receiver<windows::core::Result<HANDLE>>, std::sync::mpsc::Sender<windows::core::Result<HANDLE>>) {
+        let (tx_frames, rx_frames) = std::sync::mpsc::sync_channel(0);
+        let (tx_ready, rx_ready) = std::sync::mpsc::sync_channel(0);
+        thread::spawn(move || {
+            self.run_loop(tx_frames,rx_ready)
+        });
+        std::thread::sleep()
+    }
+    fn run_loop(self, tx: std::sync::mpsc::SyncSender<windows::core::Result<HANDLE>>, rx: std::sync::mpsc::Receiver<bool>) {
+
+
+
+
+    }
+}
+
 unsafe impl Send for DesktopDuplicationApi {}
 
 unsafe impl Sync for DesktopDuplicationApi {}
@@ -306,13 +370,11 @@ impl DesktopDuplicationApi {
 
     /// Creates a new instance of the api from provided device and context.
     pub fn new_with(d3d_device: ID3D11Device4, ctx: ID3D11DeviceContext4, output: Display) -> Result<Self> {
-        let dupl = Self::create_dupl_output(&d3d_device, &output)?;
         Ok(Self {
             d3d_device,
             d3d_ctx: ctx,
             vsync_stream: output.get_vsync_stream(),
             output,
-            dupl: Some(dupl),
             options: Default::default(),
             state: Default::default(),
             last_frame_info: None,
@@ -375,32 +437,6 @@ impl DesktopDuplicationApi {
         }
     }
 
-    fn create_dupl_output(dev: &ID3D11Device4, output: &Display) -> Result<IDXGIOutputDuplication> {
-        let supported_formats = [DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT];
-        let device: IDXGIDevice4 = dev.cast().unwrap();
-        let dupl: WinResult<IDXGIOutputDuplication> = unsafe { output.as_raw_ref().DuplicateOutput1(&device, 0, &supported_formats) };
-
-        if let Err(err) = dupl {
-            return match err.code() {
-                E_INVALIDARG => {
-                    Err(DDApiError::BadParam(format!("failed to create duplicate output. {:?}", err)))
-                }
-                E_ACCESSDENIED => {
-                    Err(DDApiError::AccessDenied)
-                }
-                DXGI_ERROR_UNSUPPORTED => {
-                    Err(DDApiError::Unsupported)
-                }
-                DXGI_ERROR_SESSION_DISCONNECTED => {
-                    Err(DDApiError::Disconnected)
-                }
-                _ => {
-                    Err(DDApiError::Unexpected(err.to_string()))
-                }
-            };
-        }
-        Ok(dupl.unwrap())
-    }
 
     /// unlike [acquire_next_vsync_frame][Self::acquire_next_vsync_frame], this is a blocking call and immediately returns the texture
     /// without waiting for vsync.
