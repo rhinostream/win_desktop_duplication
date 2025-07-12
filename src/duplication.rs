@@ -431,7 +431,7 @@ impl DesktopDuplicationApi {
         }
         // self.release_locked_frame();
         let dupl = self.dupl.as_ref().unwrap();
-        let status = unsafe { dupl.AcquireNextFrame(0, &mut frame_info, &mut self.state.last_resource) };
+        let status = unsafe { dupl.AcquireNextFrame(timeout.as_millis() as _, &mut frame_info, &mut self.state.last_resource) };
         if let Err(e) = status {
             match e.code() {
                 DXGI_ERROR_ACCESS_LOST => {

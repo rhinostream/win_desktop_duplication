@@ -3,7 +3,7 @@
 
 use windows::core::{Interface, Result as WinResult};
 use windows::Win32::Foundation::LUID;
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory6};
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_ADAPTER_DESC3, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter4, IDXGIFactory6};
 
 use crate::outputs::Display;
 use crate::utils::convert_u16_to_string;
@@ -17,6 +17,12 @@ mod test {
         for adapter in AdapterFactory::new() {
             println!("{}", adapter.name());
             println!("{:?}", adapter.luid());
+            for out in adapter.iter_displays() {
+                println!("{}", out.name());
+                for mode in out.get_display_modes().unwrap() {
+                    println!("{}x{} @ {}hz", mode.width, mode.height, (1.0 * (mode.refresh_num as f64)) / mode.refresh_den as f64)
+                }
+            }
         }
     }
 

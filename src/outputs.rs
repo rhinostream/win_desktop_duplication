@@ -4,8 +4,8 @@
 //! * [DisplayVSyncStream] - provides async [Stream][futures::Stream] that ticks at every
 //!                          display vsync event.
 use std::cmp::max;
-use std::ffi::CString;
-use std::mem::{size_of, swap};
+use std::ffi::{c_void, CString};
+use std::mem::{size_of, swap, transmute};
 use std::pin::Pin;
 use std::ptr::{null, null_mut};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
@@ -16,9 +16,10 @@ use std::time::Duration;
 use futures::Stream;
 use log::{error, trace};
 use windows::core::{PCSTR, Result as WinResult};
-use windows::Win32::Graphics::Dxgi::{DXGI_MODE_DESC1, DXGI_OUTPUT_DESC1, IDXGIOutput6};
+use windows::Win32::Graphics::Dxgi::{DXGI_MODE_DESC1, DXGI_OUTPUT_DESC1, DXGIDisableVBlankVirtualization, IDXGIOutput6};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM};
-use windows::Win32::Graphics::Gdi::{CDS_TYPE, ChangeDisplaySettingsExA, DEVMODE_DISPLAY_ORIENTATION, DEVMODEA, DISP_CHANGE_SUCCESSFUL, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_FLAGS, EnumDisplaySettingsExA};
+use windows::Win32::Graphics::Gdi::{CDS_TYPE, ChangeDisplaySettingsExA, DEVMODE_DISPLAY_ORIENTATION, DEVMODEA, DISP_CHANGE_SUCCESSFUL, DISPLAY_DEVICEA, DISPLAY_DEVICEW, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_DISPLAYORIENTATION, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_FLAGS, EnumDisplayDevicesW, EnumDisplaySettingsExA, GetMonitorInfoW, MONITORINFO, MONITORINFOEXW};
+use windows::Win32::UI::WindowsAndMessaging::EDD_GET_DEVICE_INTERFACE_NAME;
 
 use crate::errors::DDApiError;
 use crate::utils::convert_u16_to_string;
@@ -33,6 +34,8 @@ mod test {
     use futures::StreamExt;
     use tokio::runtime::Builder;
     use tokio::time;
+    use windows::Win32::Graphics::Dxgi::DXGI_OUTPUT_DESC1;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoA, MONITORINFO};
 
     use crate::devices::AdapterFactory;
     use crate::outputs::{DisplayMode, DisplayOrientation};
@@ -82,6 +85,18 @@ mod test {
         println!("{:?}", curr_settings);
     }
 
+
+    #[test]
+    fn test_display_rect() {
+        let disp = AdapterFactory::new().get_adapter_by_idx(0).unwrap().get_display_by_idx(1).unwrap();
+        let mut desc: DXGI_OUTPUT_DESC1 = Default::default();
+        unsafe { disp.0.GetDesc1(&mut desc).unwrap() };
+
+        let mut info: MONITORINFO = Default::default();
+        info.cbSize = size_of::<MONITORINFO>() as u32;
+        unsafe { GetMonitorInfoA(desc.Monitor, &mut info); }
+        println!("{:?}", info.rcMonitor);
+    }
 
     #[test]
     fn test_display_sync_stream() {
@@ -135,6 +150,18 @@ impl Display {
         let mut desc: DXGI_OUTPUT_DESC1 = Default::default();
         unsafe { self.0.GetDesc1(&mut desc).unwrap() };
         convert_u16_to_string(&desc.DeviceName)
+    }
+
+    pub fn display_name(&self) -> String {
+        let mut desc: DXGI_OUTPUT_DESC1 = Default::default();
+        unsafe { self.0.GetDesc1(&mut desc).unwrap() };
+
+        let mut display_device: DISPLAY_DEVICEW = Default::default();
+        display_device.cb = size_of::<DISPLAY_DEVICEW>() as u32;
+
+        unsafe { EnumDisplayDevicesW(windows::core::PCWSTR(&desc.DeviceName[0]), 0, &mut display_device, EDD_GET_DEVICE_INTERFACE_NAME); }
+
+        convert_u16_to_string(&display_device.DeviceString)
     }
 
     /// get supported display modes
@@ -367,6 +394,7 @@ impl DisplayVSyncStream {
         // the thread auto stops when this object goes out of scope.
         let thread_handle = spawn(move || {
             let output = output;
+            unsafe { let _ = DXGIDisableVBlankVirtualization(); }
             loop {
                 let mut out = Ok(());
                 let res = unsafe { output.0.WaitForVBlank() };
