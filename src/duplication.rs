@@ -4,6 +4,7 @@
 //!
 //! For more information on how to use check [DesktopDuplicationApi]
 
+use std::ffi::c_void;
 use std::mem::{size_of, swap};
 use std::ops::{Add, Sub};
 use std::pin::Pin;
@@ -45,6 +46,7 @@ use windows::Win32::System::StationsAndDesktops::DF_ALLOWOTHERACCOUNTHOOK;
 use windows::Win32::System::StationsAndDesktops::{
     OpenInputDesktop, SetThreadDesktop, DESKTOP_ACCESS_FLAGS,
 };
+use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, SetPriorityClass, SetThreadPriority, HIGH_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL};
 use windows::Win32::UI::WindowsAndMessaging::{
     DrawIconEx, GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, HCURSOR,
 };
@@ -304,6 +306,18 @@ unsafe impl Send for InternalDesktopDuplicationApi {}
 
 unsafe impl Sync for InternalDesktopDuplicationApi {}
 
+pub fn set_thread_priority() {
+    unsafe {
+        let status = SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
+        if status.is_err() {
+            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).unwrap();
+        } else {
+            info!("Process is set to time critical");
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL).unwrap();
+        }
+    }
+}
 impl InternalDesktopDuplicationApi {
     /// Create a new instance of Desktop Duplication api from the provided [adapter][Adapter] and
     /// [display][Display]. The application auto creates directx device and context from provided
@@ -429,7 +443,6 @@ impl InternalDesktopDuplicationApi {
         if self.dupl.is_none() {
             self.reacquire_dup()?;
         }
-        self.release_locked_frame();
 
         let dupl = self.dupl.as_ref().unwrap();
 
@@ -490,7 +503,6 @@ impl InternalDesktopDuplicationApi {
                 self.ensure_cache_frame(new_frame.as_ref().unwrap()).inspect_err(|_| {
                     self.release_locked_frame();
                 })?;
-
                 break;
             } else {
                 debug!(
@@ -515,6 +527,7 @@ impl InternalDesktopDuplicationApi {
                     tex.as_raw_ref(),
                 );
             }
+            self.release_locked_frame();
         }
         if self.state.frame.is_none() {
             return Err(DDApiError::AccessLost);
@@ -959,6 +972,23 @@ pub struct DesktopDuplicationApi {
     pub last_cursor_shape: Option<CursorShape>,
 }
 
+extern "system" {
+    fn D3DKMTSetProcessSchedulingPriorityClass(handle: *mut c_void, priority: u32) -> u32;
+}
+
+
+pub fn set_gpu_priority() {
+    unsafe {
+        let process = GetCurrentProcess();
+        let status = D3DKMTSetProcessSchedulingPriorityClass(process.0 as *mut c_void, 5);
+        if status != 0 {
+            warn!("cant set realtime gpu priority!!!, {:#x}", status);
+            D3DKMTSetProcessSchedulingPriorityClass(process.0 as *mut c_void, 4);
+        } else {
+            info!("successfully set GPU Priority");
+        }
+    }
+}
 impl DesktopDuplicationApi {
 
     pub fn new(adapter: Adapter, display: Display) -> Result<Self> {
@@ -1024,6 +1054,13 @@ impl DesktopDuplicationApi {
         let (signal_tx, signal_rx) = sync_channel(0);
         let (config_tx, config_rx) = sync_channel(10);
         thread::spawn(move || {
+            set_thread_priority();
+            let (dev, _) = ddi.get_device_and_ctx();
+            let dev: IDXGIDevice4 = dev.cast().unwrap();
+            unsafe {
+                dev.SetGPUThreadPriority(7);
+            }
+            set_gpu_priority();
             let mut last_frame: Option<Texture> = None;
             let mut last_handle: Option<HANDLE> = None;
             loop {
