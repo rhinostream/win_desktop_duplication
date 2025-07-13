@@ -55,7 +55,6 @@ use crate::outputs::{Display, DisplayVSyncStream};
 use crate::texture::{Texture, TextureDesc};
 use crate::Result;
 
-mod dd_internal;
 
 #[cfg(test)]
 mod test {
