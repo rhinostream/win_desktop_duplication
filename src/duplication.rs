@@ -29,7 +29,13 @@ use windows::Win32::Foundation::{
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1,
 };
-use windows::Win32::Graphics::Direct3D11::{D3D11CreateDevice, ID3D11Device, ID3D11Device4, ID3D11DeviceContext, ID3D11DeviceContext4, D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_DEBUG, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_RESOURCE_MISC_SHARED, D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT};
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, ID3D11Device4, ID3D11DeviceContext, ID3D11DeviceContext4,
+    D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_DEBUG, D3D11_CREATE_DEVICE_FLAG,
+    D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_RESOURCE_MISC_SHARED,
+    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT,
+};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
     DXGI_SAMPLE_DESC,
@@ -46,7 +52,10 @@ use windows::Win32::System::StationsAndDesktops::DF_ALLOWOTHERACCOUNTHOOK;
 use windows::Win32::System::StationsAndDesktops::{
     OpenInputDesktop, SetThreadDesktop, DESKTOP_ACCESS_FLAGS,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, SetPriorityClass, SetThreadPriority, HIGH_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentThread, SetPriorityClass, SetThreadPriority, HIGH_PRIORITY_CLASS,
+    REALTIME_PRIORITY_CLASS, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     DrawIconEx, GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, HCURSOR,
 };
@@ -56,7 +65,6 @@ use crate::errors::DDApiError;
 use crate::outputs::{Display, DisplayVSyncStream};
 use crate::texture::{Texture, TextureDesc};
 use crate::Result;
-
 
 #[cfg(test)]
 mod test {
@@ -444,15 +452,21 @@ impl InternalDesktopDuplicationApi {
             self.reacquire_dup()?;
         }
 
-        let dupl = self.dupl.as_ref().unwrap();
-
         let instant = Instant::now();
 
         let mut new_frame = None;
+
         while instant.elapsed() < timeout {
+            self.release_locked_frame();
+            let dupl = self.dupl.as_ref().unwrap();
+            let elapsed = instant.elapsed();
+            if elapsed > timeout {
+                warn!("Whoa weird timing stuff almost made me panic");
+                break;
+            }
             let status = unsafe {
                 dupl.AcquireNextFrame(
-                    timeout.sub(instant.elapsed()).as_millis() as _,
+                    timeout.sub(elapsed).as_millis() as _,
                     &mut frame_info,
                     &mut self.state.last_resource,
                 )
@@ -500,9 +514,10 @@ impl InternalDesktopDuplicationApi {
                 );
                 self.state.frame_locked = true;
                 new_frame = Some(Texture::new(resource.cast().unwrap()));
-                self.ensure_cache_frame(new_frame.as_ref().unwrap()).inspect_err(|_| {
-                    self.release_locked_frame();
-                })?;
+                self.ensure_cache_frame(new_frame.as_ref().unwrap())
+                    .inspect_err(|_| {
+                        self.release_locked_frame();
+                    })?;
                 break;
             } else {
                 debug!(
@@ -513,21 +528,19 @@ impl InternalDesktopDuplicationApi {
             }
         }
 
-
         unsafe {
-            self
-                .state
+            self.state
                 .frame_mutex
                 .as_ref()
                 .unwrap()
-                .AcquireSync(0, 1000).unwrap();
+                .AcquireSync(0, 1000)
+                .unwrap();
             if let Some(tex) = new_frame {
                 self.d3d_ctx.CopyResource(
                     self.state.frame.as_ref().unwrap().as_raw_ref(),
                     tex.as_raw_ref(),
                 );
             }
-            self.release_locked_frame();
         }
         if self.state.frame.is_none() {
             return Err(DDApiError::AccessLost);
@@ -540,54 +553,58 @@ impl InternalDesktopDuplicationApi {
             let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
             let shared_cursor_frame = self.state.shared_cursor_frame.clone().unwrap();
             unsafe {
-                self
-                    .state
+                self.state
                     .cursor_frame_mutex
                     .as_ref()
                     .unwrap()
-                    .AcquireSync(0, 1000).unwrap();
+                    .AcquireSync(0, 1000)
+                    .unwrap();
                 self.d3d_ctx
                     .CopyResource(cache_cursor_frame.as_raw_ref(), cache_frame.as_raw_ref());
                 self.draw_cursor(&cache_cursor_frame)?;
-                self.d3d_ctx.CopyResource(shared_cursor_frame.as_raw_ref(),cache_cursor_frame.as_raw_ref());
+                self.d3d_ctx.CopyResource(
+                    shared_cursor_frame.as_raw_ref(),
+                    cache_cursor_frame.as_raw_ref(),
+                );
 
-                self
-                    .state
+                self.state
                     .frame_mutex
                     .as_ref()
                     .unwrap()
-                    .ReleaseSync(0).unwrap();
+                    .ReleaseSync(0)
+                    .unwrap();
 
-                self
-                    .state
+                self.state
                     .cursor_frame_mutex
                     .as_ref()
                     .unwrap()
-                    .ReleaseSync(1).unwrap();
+                    .ReleaseSync(1)
+                    .unwrap();
             }
             Ok(shared_cursor_frame)
         } else {
-            unsafe{
+            unsafe {
                 let shared_cursor_frame = self.state.shared_cursor_frame.clone().unwrap();
-                self
-                    .state
+                self.state
                     .cursor_frame_mutex
                     .as_ref()
                     .unwrap()
-                    .AcquireSync(0, 1000).unwrap();
-                self.d3d_ctx.CopyResource(shared_cursor_frame.as_raw_ref(),cache_frame.as_raw_ref());
-                self
-                    .state
+                    .AcquireSync(0, 1000)
+                    .unwrap();
+                self.d3d_ctx
+                    .CopyResource(shared_cursor_frame.as_raw_ref(), cache_frame.as_raw_ref());
+                self.state
                     .frame_mutex
                     .as_ref()
                     .unwrap()
-                    .ReleaseSync(0).unwrap();
-                self
-                    .state
+                    .ReleaseSync(0)
+                    .unwrap();
+                self.state
                     .cursor_frame_mutex
                     .as_ref()
                     .unwrap()
-                    .ReleaseSync(1).unwrap();
+                    .ReleaseSync(1)
+                    .unwrap();
                 Ok(shared_cursor_frame)
             }
         }
@@ -870,7 +887,7 @@ impl InternalDesktopDuplicationApi {
                 frame.desc(),
                 D3D11_USAGE_DEFAULT,
                 D3D11_BIND_RENDER_TARGET,
-                D3D11_RESOURCE_MISC_GDI_COMPATIBLE
+                D3D11_RESOURCE_MISC_GDI_COMPATIBLE,
             )?;
             self.state.cursor_frame = Some(tex);
         }
@@ -976,7 +993,6 @@ extern "system" {
     fn D3DKMTSetProcessSchedulingPriorityClass(handle: *mut c_void, priority: u32) -> u32;
 }
 
-
 pub fn set_gpu_priority() {
     unsafe {
         let process = GetCurrentProcess();
@@ -990,7 +1006,6 @@ pub fn set_gpu_priority() {
     }
 }
 impl DesktopDuplicationApi {
-
     pub fn new(adapter: Adapter, display: Display) -> Result<Self> {
         let (device, ctx) = InternalDesktopDuplicationApi::create_device(&adapter)?;
         let ddi = InternalDesktopDuplicationApi::new(adapter, display)?;
@@ -1011,8 +1026,6 @@ impl DesktopDuplicationApi {
         });
     }
 
-
-
     /// this method is used to retrieve device and context used in this api. These can be used
     /// to build directx color conversion and image scale.
     pub fn get_device_and_ctx(&self) -> (ID3D11Device4, ID3D11DeviceContext4) {
@@ -1021,9 +1034,8 @@ impl DesktopDuplicationApi {
 
     /// configure duplication manager with given options.
     pub fn configure(&mut self, opt: DuplicationApiOptions) {
-        let _  = self.config_tx.try_send(opt);
+        let _ = self.config_tx.try_send(opt);
     }
-
 
     /// This function returns information about the last frame and provides userful information
     /// for properly representing the cursor.
@@ -1038,10 +1050,9 @@ impl DesktopDuplicationApi {
 
     pub fn get_last_frame_info(&mut self) -> FrameInfo {
         let mut last_frame = None;
-        swap(&mut self.last_frame_info,&mut last_frame);
+        swap(&mut self.last_frame_info, &mut last_frame);
         last_frame.unwrap_or_default()
     }
-
 
     fn start_loop(
         mut ddi: InternalDesktopDuplicationApi,
@@ -1147,7 +1158,11 @@ impl DesktopDuplicationApi {
             self.last_cursor_shape = frame.2;
             self.last_frame_info = Some(frame.1);
             unsafe {
-                self.last_mutex.as_ref().unwrap().AcquireSync(1,1000).unwrap();
+                self.last_mutex
+                    .as_ref()
+                    .unwrap()
+                    .AcquireSync(1, 1000)
+                    .unwrap();
             }
             Ok(self.last_frame.clone().unwrap())
         } else {
