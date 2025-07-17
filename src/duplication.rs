@@ -1122,6 +1122,8 @@ impl DesktopDuplicationApi {
                         info!("closing frame capture thread");
                         return;
                     }
+                } else {
+                    break;
                 }
             }
         });
