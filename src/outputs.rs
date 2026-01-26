@@ -13,8 +13,8 @@ use std::task::{Context, Poll, Waker};
 use std::thread::{JoinHandle, sleep, spawn};
 use std::time::Duration;
 
-use futures::Stream;
 use log::{error, trace};
+use tokio_stream::Stream;
 use windows::core::{PCSTR, Result as WinResult};
 use windows::Win32::Graphics::Dxgi::{DXGI_MODE_DESC1, DXGI_OUTPUT_DESC1, DXGIDisableVBlankVirtualization, IDXGIOutput6};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM};
@@ -26,12 +26,12 @@ use crate::utils::convert_u16_to_string;
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use tokio_stream::StreamExt;
+use std::sync::Arc;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::thread::sleep;
     use std::time::Duration;
 
-    use futures::StreamExt;
     use tokio::runtime::Builder;
     use tokio::time;
     use windows::Win32::Graphics::Dxgi::DXGI_OUTPUT_DESC1;

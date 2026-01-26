@@ -34,11 +34,11 @@ targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows
 env_logger = "0.11.3"
 
 [dependencies]
-futures = "0.3.26"
-log = "0.4.17"
+log = { version = "0.4.17", features = ['release_max_level_info'] }
+tokio-stream = "0.1.18"
 
 [dependencies.tokio]
-version = "1.26.0"
+version = "1.49.0"
 features = [
     "rt",
     "time",

@@ -13,7 +13,6 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 use std::thread;
 use std::time::Duration;
 
-use futures::StreamExt;
 use log::{debug, error, info, trace, warn};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -71,9 +70,8 @@ mod test {
     use std::sync::Once;
     use std::time::{Duration, Instant};
 
-    use futures::select;
-    use futures::FutureExt;
     use log::LevelFilter::Debug;
+    use tokio::select;
     use tokio::time::interval;
 
     use crate::devices::AdapterFactory;
@@ -404,6 +402,7 @@ impl InternalDesktopDuplicationApi {
                 adapter.as_raw_ref(),
                 D3D_DRIVER_TYPE_UNKNOWN,
                 None,
+                // D3D11_CREATE_DEVICE_DEBUG,
                 D3D11_CREATE_DEVICE_FLAG(0),
                 Some(&feature_levels),
                 D3D11_SDK_VERSION,
@@ -454,8 +453,6 @@ impl InternalDesktopDuplicationApi {
 
         let instant = Instant::now();
 
-        let mut new_frame = None;
-
         while instant.elapsed() < timeout {
             self.release_locked_frame();
             let dupl = self.dupl.as_ref().unwrap();
@@ -490,6 +487,7 @@ impl InternalDesktopDuplicationApi {
                     }
                     DXGI_ERROR_WAIT_TIMEOUT => {
                         trace!("no new frame is available");
+                        break;
                     }
                     _ => {
                         return Err(DDApiError::Unexpected(format!(
@@ -513,11 +511,22 @@ impl InternalDesktopDuplicationApi {
                     frame_info.AccumulatedFrames
                 );
                 self.state.frame_locked = true;
-                new_frame = Some(Texture::new(resource.cast().unwrap()));
-                self.ensure_cache_frame(new_frame.as_ref().unwrap())
+                let new_frame = Texture::new(resource.cast().unwrap());
+                self.ensure_cache_frame(&new_frame)
                     .inspect_err(|_| {
                         self.release_locked_frame();
                     })?;
+
+                if frame_info.AccumulatedFrames == 0 {
+                    debug!("mouse update only!");
+                    continue;
+                }
+                unsafe {
+                    self.d3d_ctx.CopyResource(
+                        self.state.frame.as_ref().unwrap().as_raw_ref(),
+                        new_frame.as_raw_ref(),
+                    );
+                }
                 break;
             } else {
                 debug!(
@@ -527,38 +536,27 @@ impl InternalDesktopDuplicationApi {
                 continue;
             }
         }
-
-        unsafe {
-            self.state
-                .frame_mutex
-                .as_ref()
-                .unwrap()
-                .AcquireSync(0, 1000)
-                .unwrap();
-            if let Some(tex) = new_frame {
-                self.d3d_ctx.CopyResource(
-                    self.state.frame.as_ref().unwrap().as_raw_ref(),
-                    tex.as_raw_ref(),
-                );
-            }
-        }
         if self.state.frame.is_none() {
-            return Err(DDApiError::AccessLost);
+            return Err(DDApiError::TimeOut)
         }
 
         let cache_frame = self.state.frame.clone().unwrap();
 
         self.ensure_cache_cursor_frame(&cache_frame)?;
-        if !self.options.skip_cursor {
+        unsafe{
+            self.state
+                .cursor_frame_mutex
+                .as_ref()
+                .unwrap()
+                .AcquireSync(0, 1000)
+                .unwrap();
+        }
+
+        let ret = if !self.options.skip_cursor {
             let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
             let shared_cursor_frame = self.state.shared_cursor_frame.clone().unwrap();
             unsafe {
-                self.state
-                    .cursor_frame_mutex
-                    .as_ref()
-                    .unwrap()
-                    .AcquireSync(0, 1000)
-                    .unwrap();
+
                 self.d3d_ctx
                     .CopyResource(cache_cursor_frame.as_raw_ref(), cache_frame.as_raw_ref());
                 self.draw_cursor(&cache_cursor_frame)?;
@@ -566,53 +564,42 @@ impl InternalDesktopDuplicationApi {
                     shared_cursor_frame.as_raw_ref(),
                     cache_cursor_frame.as_raw_ref(),
                 );
-
-                self.state
-                    .frame_mutex
-                    .as_ref()
-                    .unwrap()
-                    .ReleaseSync(0)
-                    .unwrap();
-
-                self.state
-                    .cursor_frame_mutex
-                    .as_ref()
-                    .unwrap()
-                    .ReleaseSync(1)
-                    .unwrap();
             }
             Ok(shared_cursor_frame)
         } else {
             unsafe {
                 let shared_cursor_frame = self.state.shared_cursor_frame.clone().unwrap();
-                self.state
-                    .cursor_frame_mutex
-                    .as_ref()
-                    .unwrap()
-                    .AcquireSync(0, 1000)
-                    .unwrap();
                 self.d3d_ctx
                     .CopyResource(shared_cursor_frame.as_raw_ref(), cache_frame.as_raw_ref());
+                Ok(shared_cursor_frame)
+            }
+        };
+
+        if ret.is_err() {
+            unsafe {
                 self.state
-                    .frame_mutex
+                    .cursor_frame_mutex
                     .as_ref()
                     .unwrap()
                     .ReleaseSync(0)
                     .unwrap();
-                self.state
+            }
+        } else {
+            unsafe {
+                let _ = self.state
                     .cursor_frame_mutex
                     .as_ref()
                     .unwrap()
-                    .ReleaseSync(1)
-                    .unwrap();
-                Ok(shared_cursor_frame)
+                    .ReleaseSync(1);
             }
-        }
+        };
+        ret
+
     }
 
     fn _last_frame_info(&self, frame_info: &DXGI_OUTDUPL_FRAME_INFO) -> DXGI_OUTDUPL_FRAME_INFO {
         let mut last_frame_info = self.last_frame_info.clone().unwrap_or_default();
-        last_frame_info.AccumulatedFrames = frame_info.AccumulatedFrames;
+        last_frame_info.AccumulatedFrames += frame_info.AccumulatedFrames;
         if frame_info.LastMouseUpdateTime > 0 {
             last_frame_info.LastMouseUpdateTime = frame_info.LastMouseUpdateTime;
             last_frame_info.PointerPosition = frame_info.PointerPosition;
@@ -872,12 +859,22 @@ impl InternalDesktopDuplicationApi {
                 frame.desc(),
                 D3D11_USAGE_DEFAULT,
                 D3D11_BIND_RENDER_TARGET,
+                D3D11_RESOURCE_MISC_FLAG(0)
+            )?;
+            self.state.frame = Some(tex);
+
+
+            let tex = self.create_texture(
+                frame.desc(),
+                D3D11_USAGE_DEFAULT,
+                D3D11_BIND_RENDER_TARGET,
                 D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
             )?;
             let mutex = tex.as_raw_ref().cast().unwrap();
-            self.state.frame = Some(tex);
-            self.state.frame_mutex = Some(mutex);
+            self.state.shared_cursor_frame = Some(tex);
+            self.state.cursor_frame_mutex = Some(mutex);
         }
+
         Ok(())
     }
 
@@ -892,17 +889,6 @@ impl InternalDesktopDuplicationApi {
             self.state.cursor_frame = Some(tex);
         }
 
-        if self.state.shared_cursor_frame.is_none() {
-            let tex = self.create_texture(
-                frame.desc(),
-                D3D11_USAGE_DEFAULT,
-                D3D11_BIND_RENDER_TARGET,
-                D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
-            )?;
-            let mutex = tex.as_raw_ref().cast().unwrap();
-            self.state.shared_cursor_frame = Some(tex);
-            self.state.cursor_frame_mutex = Some(mutex);
-        }
         Ok(())
     }
 
@@ -1087,7 +1073,7 @@ impl DesktopDuplicationApi {
                                 .is_some_and(|lf| lf.as_raw_ref() == tex.as_raw_ref())
                             {
                                 Ok((
-                                    *last_handle.as_ref().unwrap(),
+                                    0 as HANDLE,
                                     ddi.get_last_frame_info(),
                                     ddi.last_cursor_shape.clone(),
                                 ) as FrameData)
@@ -1145,7 +1131,8 @@ impl DesktopDuplicationApi {
             let frame = frame_res?;
             // check the if the handle is same as old one
             // if not, replace the handle and open new texture
-            if !self.last_handle.as_ref().is_some_and(|h| *h == frame.0) {
+            if self.last_handle.is_none() || frame.0 != 0 {
+                debug!("got new handle");
                 self.last_handle = Some(frame.0);
                 let tex_raw = unsafe {
                     self.d3d_device
@@ -1191,7 +1178,6 @@ struct DuplicationState {
     cursor_frame: Option<Texture>,
     shared_cursor_frame: Option<Texture>,
 
-    frame_mutex: Option<IDXGIKeyedMutex>,
     cursor_frame_mutex: Option<IDXGIKeyedMutex>,
 
     cursor: Option<HCURSOR>,
@@ -1202,8 +1188,12 @@ struct DuplicationState {
 impl DuplicationState {
     pub fn reset(&mut self) {
         self.frame = None;
-        self.last_resource = None;
         self.cursor_frame = None;
+        self.shared_cursor_frame = None;
+
+        self.cursor_frame_mutex = None;
+
+        self.last_resource = None;
         self.frame_locked = false;
     }
 }

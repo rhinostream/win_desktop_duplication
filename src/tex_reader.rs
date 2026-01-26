@@ -13,7 +13,6 @@ mod test {
     use std::sync::Once;
     use std::time::Duration;
 
-    use futures::{FutureExt, select};
     use log::LevelFilter::Debug;
     use tokio::time::interval;
 
