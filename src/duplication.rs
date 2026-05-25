@@ -616,11 +616,22 @@ impl DesktopDuplicationApi {
             )
         };
 
-        if result.is_err() {
-            unsafe { return Err(DDApiError::Unexpected(format!("failed to draw icon. {:?}", GetLastError()))); }
+        // Always release the DC, even on draw failure. Otherwise the DXGI
+        // surface stays locked and every subsequent GetDC call returns
+        // DXGI_ERROR_INVALID_CALL ("failed to get DC for cursor image"),
+        // permanently breaking the duplication instance.
+        let last_error = if result.is_err() { Some(unsafe { GetLastError() }) } else { None };
+        let _ = unsafe { surface.ReleaseDC(None) };
+
+        if let Some(err) = last_error {
+            // The cursor handle reported by GetCursorInfo may have already been
+            // destroyed (ERROR_INVALID_CURSOR_HANDLE = 1402). Invalidate our
+            // cache so the next frame re-queries fresh cursor info instead of
+            // re-using the bad handle.
+            self.state.cursor = None;
+            return Err(DDApiError::Unexpected(format!("failed to draw icon. {:?}", err)));
         }
 
-        let _ = unsafe { surface.ReleaseDC(None) };
         Ok(())
     }
 
