@@ -4,56 +4,87 @@
 //!
 //! For more information on how to use check [DesktopDuplicationApi]
 
-use std::mem::size_of;
-use std::ops::Add;
+use std::ffi::c_void;
+use std::mem::swap;
+use std::ops::{Add, Sub};
+use std::pin::Pin;
 use std::ptr::null;
+use std::sync::mpsc::{sync_channel, SyncSender};
 use std::thread;
 use std::time::Duration;
 
-use futures::StreamExt;
-use log::{debug, error, trace, warn};
-use tokio::task::spawn_blocking;
-use tokio::time;
-use tokio::time::{Instant, Interval, MissedTickBehavior, sleep};
-use windows::core::Interface;
-use windows::core::Result as WinResult;
-use windows::Win32::Foundation::{BOOL, E_ACCESSDENIED, E_INVALIDARG, GENERIC_READ, GetLastError, POINT};
-use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1};
-use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_GDI_COMPATIBLE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device4, ID3D11DeviceContext4};
-use windows::Win32::Graphics::Dxgi::{DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL, DXGI_ERROR_MORE_DATA, DXGI_ERROR_SESSION_DISCONNECTED, DXGI_ERROR_UNSUPPORTED, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO, IDXGIDevice4, IDXGIOutputDuplication, IDXGIResource, IDXGISurface1};
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC};
-use windows::Win32::Graphics::Gdi::DeleteObject;
-use windows::Win32::System::StationsAndDesktops::{DESKTOP_ACCESS_FLAGS, OpenInputDesktop, SetThreadDesktop};
-use windows::Win32::System::StationsAndDesktops::DF_ALLOWOTHERACCOUNTHOOK;
-use windows::Win32::UI::WindowsAndMessaging::{CURSOR_SHOWING, CURSORINFO, DI_NORMAL, DrawIconEx, GetCursorInfo, GetIconInfo, HCURSOR};
-
+use crate::cursor::{get_cursor_id, CursorID};
+use crate::cursor_renderer::CursorRenderer;
 use crate::devices::Adapter;
 use crate::errors::DDApiError;
 use crate::outputs::{Display, DisplayVSyncStream};
-use crate::Result;
 use crate::texture::{Texture, TextureDesc};
+use crate::Result;
+use log::{debug, error, info, trace, warn};
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::task::spawn_blocking;
+use tokio::time;
+use tokio::time::{sleep, Instant, Interval, MissedTickBehavior};
+use windows::core::imp::{CloseHandle, HANDLE};
+use windows::core::Interface;
+use windows::core::Result as WinResult;
+use windows::Win32::Foundation::{
+    GetLastError, E_ACCESSDENIED, E_INVALIDARG, GENERIC_READ,
+};
+use windows::Win32::Graphics::Direct3D::{
+    D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_1,
+};
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, ID3D11Device4, ID3D11DeviceContext, ID3D11DeviceContext4,
+    D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_DEBUG,
+    D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_RESOURCE_MISC_SHARED,
+    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE, D3D11_USAGE_DEFAULT,
+};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
+    DXGI_SAMPLE_DESC,
+};
+use windows::Win32::Graphics::Dxgi::{
+    IDXGIDevice4, IDXGIKeyedMutex, IDXGIOutputDuplication, IDXGIResource, IDXGIResource1,
+    DXGI_ERROR_ACCESS_DENIED, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL,
+    DXGI_ERROR_MORE_DATA, DXGI_ERROR_SESSION_DISCONNECTED, DXGI_ERROR_UNSUPPORTED,
+    DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_OUTDUPL_POINTER_SHAPE_INFO,
+    DXGI_SHARED_RESOURCE_READ,
+};
+use windows::Win32::System::StationsAndDesktops::DF_ALLOWOTHERACCOUNTHOOK;
+use windows::Win32::System::StationsAndDesktops::{
+    OpenInputDesktop, SetThreadDesktop, DESKTOP_ACCESS_FLAGS,
+};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentThread, SetPriorityClass, SetThreadPriority, HIGH_PRIORITY_CLASS,
+    REALTIME_PRIORITY_CLASS, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL,
+};
 
 #[cfg(test)]
 mod test {
     use std::sync::Once;
     use std::time::{Duration, Instant};
 
-    use futures::FutureExt;
-    use futures::select;
     use log::LevelFilter::Debug;
+    use tokio::select;
     use tokio::time::interval;
 
-    use crate::{DDApiError, DuplicationApiOptions};
     use crate::devices::AdapterFactory;
     use crate::duplication::DesktopDuplicationApi;
     use crate::outputs::DisplayMode;
     use crate::utils::{co_init, set_process_dpi_awareness};
+    use crate::{DDApiError, DuplicationApiOptions};
 
     static INIT: Once = Once::new();
 
     pub fn initialize() {
         INIT.call_once(|| {
-            let _ = env_logger::builder().is_test(true).filter_level(Debug).try_init();
+            let _ = env_logger::builder()
+                .is_test(true)
+                .filter_level(Debug)
+                .try_init();
         });
     }
 
@@ -62,7 +93,10 @@ mod test {
         initialize();
 
         let rt = tokio::runtime::Builder::new_current_thread()
-            .thread_name("graphics_thread".to_owned()).enable_time().build().unwrap();
+            .thread_name("graphics_thread".to_owned())
+            .enable_time()
+            .build()
+            .unwrap();
 
         rt.block_on(async {
             set_process_dpi_awareness();
@@ -72,9 +106,7 @@ mod test {
             let output = adapter.get_display_by_idx(0).unwrap();
             let mut dupl = DesktopDuplicationApi::new(adapter, output.clone()).unwrap();
             let curr_mode = output.get_current_display_mode().unwrap();
-            dupl.configure(DuplicationApiOptions {
-                skip_cursor: true
-            });
+            dupl.configure(DuplicationApiOptions { skip_cursor: true });
             // let new_mode = DisplayMode {
             //     width: 1920,
             //     height: 1080,
@@ -115,9 +147,8 @@ mod test {
                             break;
                         }
                     }
-                }
-                ;
-            };
+                };
+            }
         });
     }
 
@@ -168,7 +199,6 @@ mod test {
     }
 }
 
-
 /// Provides asynchronous, synchronous api for windows desktop duplication with additional features such as
 /// cursor pre-drawn, frame rate synced to desktop refresh rate.
 ///
@@ -208,11 +238,10 @@ mod test {
 ///         }
 ///     }
 /// ```
-pub struct DesktopDuplicationApi {
+struct InternalDesktopDuplicationApi {
     d3d_device: ID3D11Device4,
     d3d_ctx: ID3D11DeviceContext4,
     output: Display,
-    vsync_stream: DisplayVSyncStream,
     dupl: Option<IDXGIOutputDuplication>,
 
     options: DuplicationApiOptions,
@@ -240,7 +269,6 @@ pub struct CursorInfo {
     pub position: CursorPos,
 }
 
-
 #[repr(C)]
 #[derive(Default, Clone, Debug)]
 pub struct CursorPos {
@@ -256,6 +284,7 @@ pub struct CursorShape {
     pub pitch: u32,
     pub kind: CursorKind,
     pub hotspot: CursorPos,
+    pub cursor_id: Option<CursorID>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -269,28 +298,31 @@ pub enum CursorKind {
 impl From<u32> for CursorKind {
     fn from(value: u32) -> Self {
         match value {
-            0x1 => {
-                Self::SingleBit
-            }
-            0x2 => {
-                Self::ARGB
-            }
-            0x4 => {
-                Self::Masked
-            }
-            _ => {
-                Self::ARGB
-            }
+            0x1 => Self::SingleBit,
+            0x2 => Self::ARGB,
+            0x4 => Self::Masked,
+            _ => Self::ARGB,
         }
     }
 }
 
-unsafe impl Send for DesktopDuplicationApi {}
+unsafe impl Send for InternalDesktopDuplicationApi {}
 
-unsafe impl Sync for DesktopDuplicationApi {}
+unsafe impl Sync for InternalDesktopDuplicationApi {}
 
-
-impl DesktopDuplicationApi {
+pub fn set_thread_priority() {
+    unsafe {
+        let status = SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
+        if status.is_err() {
+            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).unwrap();
+        } else {
+            info!("Process is set to time critical");
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL).unwrap();
+        }
+    }
+}
+impl InternalDesktopDuplicationApi {
     /// Create a new instance of Desktop Duplication api from the provided [adapter][Adapter] and
     /// [display][Display]. The application auto creates directx device and context from provided
     /// adapter.
@@ -305,14 +337,16 @@ impl DesktopDuplicationApi {
     }
 
     /// Creates a new instance of the api from provided device and context.
-    pub fn new_with(d3d_device: ID3D11Device4, ctx: ID3D11DeviceContext4, output: Display) -> Result<Self> {
-        let dupl = Self::create_dupl_output(&d3d_device, &output)?;
+    pub fn new_with(
+        d3d_device: ID3D11Device4,
+        ctx: ID3D11DeviceContext4,
+        output: Display,
+    ) -> Result<Self> {
         Ok(Self {
             d3d_device,
             d3d_ctx: ctx,
-            vsync_stream: output.get_vsync_stream(),
             output,
-            dupl: Some(dupl),
+            dupl: None,
             options: Default::default(),
             state: Default::default(),
             last_frame_info: None,
@@ -337,23 +371,23 @@ impl DesktopDuplicationApi {
     /// ## Non-recoverable errors
     /// * [DDApiError::Unexpected] - this type of error cant be recovered from. the application should
     /// drop the struct and re-create a new instance.
-    pub async fn acquire_next_vsync_frame(&mut self) -> Result<Texture> {
-        // wait for vsync
-        if (self.vsync_stream.next().await).is_some_and(|r| r.is_err()) {
-            return Err(DDApiError::Unexpected("DisplayVSyncStream failed unexpectedly".to_owned()));
-        }
-        // adding 2 ms sleep to ensure frame would be available
-        // this is moved from vsync code for better control
-        // sleep(Duration::from_millis(2)).await;
-
-        // acquire next_frame
-        let res = self.acquire_next_frame_now();
-        if res.is_err() {
-            trace!("something went wrong with acquiring next frame. probably desktop duplication \
-            instance failed");
-        }
-        res
-    }
+    // pub async fn acquire_next_vsync_frame(&mut self) -> Result<Texture> {
+    //     // wait for vsync
+    //     if (self.vsync_stream.next().await).is_some_and(|r| r.is_err()) {
+    //         return Err(DDApiError::Unexpected("DisplayVSyncStream failed unexpectedly".to_owned()));
+    //     }
+    //     // adding 2 ms sleep to ensure frame would be available
+    //     // this is moved from vsync code for better control
+    //     // sleep(Duration::from_millis(2)).await;
+    //
+    //     // acquire next_frame
+    //     let res = self.acquire_next_frame_now();
+    //     if res.is_err() {
+    //         trace!("something went wrong with acquiring next frame. probably desktop duplication \
+    //         instance failed");
+    //     }
+    //     res
+    // }
 
     pub fn create_device(adapter: &Adapter) -> Result<(ID3D11Device4, ID3D11DeviceContext4)> {
         let feature_levels = [D3D_FEATURE_LEVEL_11_1];
@@ -362,44 +396,30 @@ impl DesktopDuplicationApi {
         let mut d3d_ctx = None;
 
         let resp = unsafe {
-            D3D11CreateDevice(adapter.as_raw_ref(), D3D_DRIVER_TYPE_UNKNOWN,
-                              None, D3D11_CREATE_DEVICE_FLAG(0),
-                              Some(&feature_levels), D3D11_SDK_VERSION,
-                              Some(&mut d3d_device), Some(&mut feature_level),
-                              Some(&mut d3d_ctx))
+            D3D11CreateDevice(
+                adapter.as_raw_ref(),
+                D3D_DRIVER_TYPE_UNKNOWN,
+                None,
+                D3D11_CREATE_DEVICE_DEBUG,
+                // D3D11_CREATE_DEVICE_FLAG(0),
+                Some(&feature_levels),
+                D3D11_SDK_VERSION,
+                Some(&mut d3d_device),
+                Some(&mut feature_level),
+                Some(&mut d3d_ctx),
+            )
         };
         if resp.is_err() {
-            Err(DDApiError::Unexpected(format!("faild d3d11 create device. {:?}", resp)))
+            Err(DDApiError::Unexpected(format!(
+                "faild d3d11 create device. {:?}",
+                resp
+            )))
         } else {
-            Ok((d3d_device.unwrap().cast().unwrap(), d3d_ctx.unwrap().cast().unwrap()))
+            Ok((
+                d3d_device.unwrap().cast().unwrap(),
+                d3d_ctx.unwrap().cast().unwrap(),
+            ))
         }
-    }
-
-    fn create_dupl_output(dev: &ID3D11Device4, output: &Display) -> Result<IDXGIOutputDuplication> {
-        let supported_formats = [DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT];
-        let device: IDXGIDevice4 = dev.cast().unwrap();
-        let dupl: WinResult<IDXGIOutputDuplication> = unsafe { output.as_raw_ref().DuplicateOutput1(&device, 0, &supported_formats) };
-
-        if let Err(err) = dupl {
-            return match err.code() {
-                E_INVALIDARG => {
-                    Err(DDApiError::BadParam(format!("failed to create duplicate output. {:?}", err)))
-                }
-                E_ACCESSDENIED => {
-                    Err(DDApiError::AccessDenied)
-                }
-                DXGI_ERROR_UNSUPPORTED => {
-                    Err(DDApiError::Unsupported)
-                }
-                DXGI_ERROR_SESSION_DISCONNECTED => {
-                    Err(DDApiError::Disconnected)
-                }
-                _ => {
-                    Err(DDApiError::Unexpected(err.to_string()))
-                }
-            };
-        }
-        Ok(dupl.unwrap())
     }
 
     /// unlike [acquire_next_vsync_frame][Self::acquire_next_vsync_frame], this is a blocking call and immediately returns the texture
@@ -425,89 +445,189 @@ impl DesktopDuplicationApi {
 
     pub fn acquire_next_frame(&mut self, timeout: Duration) -> Result<Texture> {
         let mut frame_info = Default::default();
-
         if self.dupl.is_none() {
             self.reacquire_dup()?;
         }
-        // self.release_locked_frame();
-        let dupl = self.dupl.as_ref().unwrap();
-        let status = unsafe { dupl.AcquireNextFrame(timeout.as_millis() as _, &mut frame_info, &mut self.state.last_resource) };
-        if let Err(e) = status {
-            match e.code() {
-                DXGI_ERROR_ACCESS_LOST => {
-                    warn!("display access lost. maybe desktop mode switch?, {:?}",e);
-                    self.reacquire_dup()?;
-                    return Err(DDApiError::AccessLost);
-                }
-                DXGI_ERROR_ACCESS_DENIED => {
-                    warn!("display access is denied. Maybe running in a secure environment?");
-                    self.reacquire_dup()?;
-                    return Err(DDApiError::AccessDenied);
-                }
-                DXGI_ERROR_INVALID_CALL => {
-                    warn!("dxgi_error_invalid_call. maybe forgot to ReleaseFrame()?");
-                    self.reacquire_dup()?;
-                    return Err(DDApiError::AccessLost);
-                }
-                DXGI_ERROR_WAIT_TIMEOUT => {
-                    trace!("no new frame is available");
-                }
-                _ => {
-                    return Err(DDApiError::Unexpected(format!("acquire frame failed {:?}", e)));
-                }
-            }
-        } else {
-            self.last_frame_info = Some(frame_info);
-            if frame_info.PointerShapeBufferSize != 0 {
-                let mut shape = CursorShape::default();
-                self._get_cursor_shape(&mut shape)?;
-                self.last_cursor_shape = Some(shape);
-            }
-        }
 
+        let instant = Instant::now();
 
-        if let Some(resource) = self.state.last_resource.as_ref() {
-            debug!("got fresh resource. accumulated {} frames",frame_info.AccumulatedFrames);
-            self.state.frame_locked = true;
-            let new_frame = Texture::new(resource.cast().unwrap());
-            self.ensure_cache_frame(&new_frame).inspect_err(|_| {
-                self.release_locked_frame();
-            })?;
-            unsafe { self.d3d_ctx.CopyResource(self.state.frame.as_ref().unwrap().as_raw_ref(), new_frame.as_raw_ref()); }
-        } else {
-            debug!("no fresh resource. accumulated {} frames",frame_info.AccumulatedFrames);
+        while instant.elapsed() < timeout {
+            self.release_locked_frame();
+            let dupl = self.dupl.as_ref().unwrap();
+            let elapsed = instant.elapsed();
+            if elapsed > timeout {
+                warn!("Whoa weird timing stuff almost made me panic");
+                break;
+            }
+            let status = unsafe {
+                dupl.AcquireNextFrame(
+                    timeout.sub(elapsed).as_millis() as _,
+                    &mut frame_info,
+                    &mut self.state.last_resource,
+                )
+            };
+            if let Err(e) = status {
+                match e.code() {
+                    DXGI_ERROR_ACCESS_LOST => {
+                        warn!("display access lost. maybe desktop mode switch?, {:?}", e);
+                        self.reacquire_dup()?;
+                        return Err(DDApiError::AccessLost);
+                    }
+                    DXGI_ERROR_ACCESS_DENIED => {
+                        warn!("display access is denied. Maybe running in a secure environment?");
+                        self.reacquire_dup()?;
+                        return Err(DDApiError::AccessDenied);
+                    }
+                    DXGI_ERROR_INVALID_CALL => {
+                        warn!("dxgi_error_invalid_call. maybe forgot to ReleaseFrame()?");
+                        self.reacquire_dup()?;
+                        return Err(DDApiError::AccessLost);
+                    }
+                    DXGI_ERROR_WAIT_TIMEOUT => {
+                        trace!("no new frame is available");
+                        break;
+                    }
+                    _ => {
+                        return Err(DDApiError::Unexpected(format!(
+                            "acquire frame failed {:?}",
+                            e
+                        )));
+                    }
+                }
+            } else {
+                // Cursor position/visibility are only valid when LastMouseUpdateTime
+                // != 0; update the renderer's stored values on those frames so the
+                // compositor keeps using the last valid position on other frames.
+                if frame_info.LastMouseUpdateTime > 0 {
+                    let pp = &frame_info.PointerPosition;
+                    self.ensure_cursor_renderer()?.update_cursor_info(
+                        pp.Visible.as_bool(),
+                        pp.Position.x,
+                        pp.Position.y,
+                    );
+                }
+                if frame_info.PointerShapeBufferSize != 0 {
+                    let mut shape = CursorShape::default();
+                    self._get_cursor_shape(&frame_info, &mut shape)?;
+                    self.ensure_cursor_renderer()?.update_cursor_shape(&shape)?;
+                    self.last_cursor_shape = Some(shape);
+                }
+                self.last_frame_info = Some(self._last_frame_info(&frame_info));
+            }
+
+            if let Some(resource) = self.state.last_resource.as_ref() {
+                debug!(
+                    "got fresh resource. accumulated {} frames",
+                    frame_info.AccumulatedFrames
+                );
+                self.state.frame_locked = true;
+                let new_frame = Texture::new(resource.cast().unwrap());
+                self.ensure_cache_frame(&new_frame).inspect_err(|_| {
+                    self.release_locked_frame();
+                })?;
+
+                if frame_info.AccumulatedFrames == 0 {
+                    debug!("mouse update only!");
+                    continue;
+                }
+                unsafe {
+                    self.d3d_ctx.CopyResource(
+                        self.state.frame.as_ref().unwrap().as_raw_ref(),
+                        new_frame.as_raw_ref(),
+                    );
+                }
+                break;
+            } else {
+                debug!(
+                    "no fresh resource. accumulated {} frames",
+                    frame_info.AccumulatedFrames
+                );
+                continue;
+            }
         }
         if self.state.frame.is_none() {
-            return Err(DDApiError::AccessLost);
+            return Err(DDApiError::TimeOut);
         }
-
-
-        self.release_locked_frame();
 
         let cache_frame = self.state.frame.clone().unwrap();
 
-        if !self.options.skip_cursor {
-            self.ensure_cache_cursor_frame(&cache_frame)?;
-            let cache_cursor_frame = self.state.cursor_frame.clone().unwrap();
-
-            unsafe {
-                self.d3d_ctx.CopyResource(
-                    cache_cursor_frame.as_raw_ref(),
-                    cache_frame.as_raw_ref())
-            }
-
-            self.draw_cursor(&cache_cursor_frame)?;
-            Ok(cache_cursor_frame)
-        } else {
-            Ok(cache_frame)
+        unsafe {
+            self.state
+                .cursor_frame_mutex
+                .as_ref()
+                .unwrap()
+                .AcquireSync(0, 1000)
+                .unwrap();
         }
+
+        // The cursor's position/visibility/shape live in the renderer (updated
+        // per-frame in the loop above), so compositing takes no cursor args.
+        let ret: Result<Texture> = if !self.options.skip_cursor {
+            let shared_cursor_frame = self.state.shared_cursor_frame.clone().unwrap();
+            // Capture all errors (including renderer creation) into `res` so the
+            // keyed mutex is always released below — do NOT use `?` here, as that
+            // would return while the mutex is still acquired.
+            let res: Result<()> = match self.ensure_cursor_renderer() {
+                Ok(renderer) => renderer.composite(&cache_frame, &shared_cursor_frame),
+                Err(e) => Err(e),
+            };
+            match res {
+                Ok(()) => Ok(shared_cursor_frame),
+                Err(e) => Err(e),
+            }
+        } else {
+            unsafe {
+                let shared_cursor_frame = self.state.shared_cursor_frame.clone().unwrap();
+                self.d3d_ctx
+                    .CopyResource(shared_cursor_frame.as_raw_ref(), cache_frame.as_raw_ref());
+                Ok(shared_cursor_frame)
+            }
+        };
+
+        if ret.is_err() {
+            unsafe {
+                self.state
+                    .cursor_frame_mutex
+                    .as_ref()
+                    .unwrap()
+                    .ReleaseSync(0)
+                    .unwrap();
+            }
+        } else {
+            unsafe {
+                let _ = self
+                    .state
+                    .cursor_frame_mutex
+                    .as_ref()
+                    .unwrap()
+                    .ReleaseSync(1);
+            }
+        };
+        ret
+    }
+
+    fn _last_frame_info(&self, frame_info: &DXGI_OUTDUPL_FRAME_INFO) -> DXGI_OUTDUPL_FRAME_INFO {
+        let mut last_frame_info = self.last_frame_info.clone().unwrap_or_default();
+        last_frame_info.AccumulatedFrames += frame_info.AccumulatedFrames;
+        if frame_info.LastMouseUpdateTime > 0 {
+            last_frame_info.LastMouseUpdateTime = frame_info.LastMouseUpdateTime;
+            last_frame_info.PointerPosition = frame_info.PointerPosition;
+        }
+        if frame_info.PointerShapeBufferSize > 0 {
+            last_frame_info.PointerShapeBufferSize = frame_info.PointerShapeBufferSize;
+        }
+        if frame_info.LastPresentTime > 0 {
+            last_frame_info.LastPresentTime = frame_info.LastPresentTime;
+            last_frame_info.ProtectedContentMaskedOut = frame_info.ProtectedContentMaskedOut;
+        }
+        return last_frame_info;
     }
 
     /// This function returns information about the last frame and provides userful information
     /// for properly representing the cursor.
-    pub fn get_last_frame_info(&self) -> FrameInfo {
+    pub fn get_last_frame_info(&mut self) -> FrameInfo {
         let last_frame = &self.last_frame_info.unwrap_or(Default::default());
-        return FrameInfo {
+        let ret = FrameInfo {
             last_present_time: last_frame.LastPresentTime,
             last_mouse_update_time: last_frame.LastMouseUpdateTime,
             accumulated_frames: last_frame.AccumulatedFrames,
@@ -515,28 +635,53 @@ impl DesktopDuplicationApi {
             pointer_info: CursorInfo {
                 visible: last_frame.PointerPosition.Visible.as_bool(),
                 updated: last_frame.PointerShapeBufferSize != 0,
-                position: CursorPos { cx: last_frame.PointerPosition.Position.x, cy: last_frame.PointerPosition.Position.y },
+                position: CursorPos {
+                    cx: last_frame.PointerPosition.Position.x,
+                    cy: last_frame.PointerPosition.Position.y,
+                },
             },
         };
+        self.last_frame_info = None;
+        ret
     }
 
     /// This function returns information about the last frame and provides userful information
     /// for properly representing the cursor.
-    fn _get_cursor_shape(&self, shape: &mut CursorShape) -> Result<()> {
-        let last_frame = self.last_frame_info.as_ref().unwrap();
+    fn _get_cursor_shape(
+        &self,
+        last_frame: &DXGI_OUTDUPL_FRAME_INFO,
+        shape: &mut CursorShape,
+    ) -> Result<()> {
         if shape.buffer.capacity() < last_frame.PointerShapeBufferSize as _ {
             shape.buffer = Vec::with_capacity(last_frame.PointerShapeBufferSize as _)
         }
-        let dupl = self.dupl.as_ref().ok_or(DDApiError::Unexpected("duplication instance doesn't exist??".to_owned()))?;
+        let dupl = self.dupl.as_ref().ok_or(DDApiError::Unexpected(
+            "duplication instance doesn't exist??".to_owned(),
+        ))?;
 
         let mut shape_info: DXGI_OUTDUPL_POINTER_SHAPE_INFO = Default::default();
         let mut required_size: u32 = 0;
-        let mut result = unsafe { dupl.GetFramePointerShape(last_frame.PointerShapeBufferSize, shape.buffer.as_mut_ptr() as _, &mut required_size, &mut shape_info) };
-        if matches!(result.clone().map_err(|err|{
-            return err.code()
-        }), Err(DXGI_ERROR_MORE_DATA)) {
+        let mut result = unsafe {
+            dupl.GetFramePointerShape(
+                last_frame.PointerShapeBufferSize,
+                shape.buffer.as_mut_ptr() as _,
+                &mut required_size,
+                &mut shape_info,
+            )
+        };
+        if matches!(
+            result.clone().map_err(|err| { return err.code() }),
+            Err(DXGI_ERROR_MORE_DATA)
+        ) {
             shape.buffer = Vec::with_capacity(required_size as _);
-            unsafe { result = dupl.GetFramePointerShape(last_frame.PointerShapeBufferSize, shape.buffer.as_mut_ptr() as _, &mut required_size, &mut shape_info); }
+            unsafe {
+                result = dupl.GetFramePointerShape(
+                    last_frame.PointerShapeBufferSize,
+                    shape.buffer.as_mut_ptr() as _,
+                    &mut required_size,
+                    &mut shape_info,
+                );
+            }
         }
         if result.is_err() {
             return Err(DDApiError::Unexpected(format!("{:?}", &result)));
@@ -551,6 +696,7 @@ impl DesktopDuplicationApi {
                 cy: shape_info.HotSpot.y,
             }
         };
+        shape.cursor_id = get_cursor_id();
 
         return Ok(());
     }
@@ -565,7 +711,6 @@ impl DesktopDuplicationApi {
         }
     }
 
-
     /// this method is used to retrieve device and context used in this api. These can be used
     /// to build directx color conversion and image scale.
     pub fn get_device_and_ctx(&self) -> (ID3D11Device4, ID3D11DeviceContext4) {
@@ -577,82 +722,33 @@ impl DesktopDuplicationApi {
         self.options = opt;
     }
 
-    fn draw_cursor(&mut self, tex: &Texture) -> Result<()> {
-        trace!("drawing cursor");
-        let mut cursor_info = CURSORINFO {
-            cbSize: size_of::<CURSORINFO>() as u32,
-            ..Default::default()
-        };
-        let cursor_present = unsafe { GetCursorInfo(&mut cursor_info as *mut CURSORINFO) };
-
-        // if cursor is not present, return raw frame.
-        if cursor_present.is_err()
-            || (cursor_info.flags.0 & CURSOR_SHOWING.0 != CURSOR_SHOWING.0)
-        {
-            debug!("cursor is absent so not drawing anything");
-            return Ok(());
-        }
-
-        if self.state.cursor.is_none() || cursor_info.hCursor != *self.state.cursor.as_ref().unwrap() {
-            self.state.cursor = Some(cursor_info.hCursor);
-            let point = Self::get_icon_hotspot(cursor_info.hCursor)?;
-            self.state.hotspot_x = point.x as _;
-            self.state.hotspot_y = point.y as _;
-        }
-        let surface: IDXGISurface1 = tex.as_raw_ref().cast().unwrap();
-        let hdc = unsafe { surface.GetDC(BOOL::from(false)) };
-        if let Err(err) = hdc {
-            return Err(DDApiError::Unexpected(format!("failed to get DC for cursor image. {:?}", err)));
-        }
-        let hdc = hdc.unwrap();
-
-        let result = unsafe {
-            DrawIconEx(
-                hdc,
-                cursor_info.ptScreenPos.x - self.state.hotspot_x,
-                cursor_info.ptScreenPos.y - self.state.hotspot_y,
-                self.state.cursor.unwrap(),
-                0, 0, 0, None, DI_NORMAL,
-            )
+    fn create_dupl_output(dev: &ID3D11Device4, output: &Display) -> Result<IDXGIOutputDuplication> {
+        let supported_formats = [
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            DXGI_FORMAT_R10G10B10A2_UNORM,
+            DXGI_FORMAT_R16G16B16A16_FLOAT,
+        ];
+        let device: IDXGIDevice4 = dev.cast().unwrap();
+        let dupl: WinResult<IDXGIOutputDuplication> = unsafe {
+            output
+                .as_raw_ref()
+                .DuplicateOutput1(&device, 0, &supported_formats)
         };
 
-        // Always release the DC, even on draw failure. Otherwise the DXGI
-        // surface stays locked and every subsequent GetDC call returns
-        // DXGI_ERROR_INVALID_CALL ("failed to get DC for cursor image"),
-        // permanently breaking the duplication instance.
-        let last_error = if result.is_err() { Some(unsafe { GetLastError() }) } else { None };
-        let _ = unsafe { surface.ReleaseDC(None) };
-
-        if let Some(err) = last_error {
-            // The cursor handle reported by GetCursorInfo may have already been
-            // destroyed (ERROR_INVALID_CURSOR_HANDLE = 1402). Invalidate our
-            // cache so the next frame re-queries fresh cursor info instead of
-            // re-using the bad handle.
-            self.state.cursor = None;
-            return Err(DDApiError::Unexpected(format!("failed to draw icon. {:?}", err)));
+        if let Err(err) = dupl {
+            return match err.code() {
+                E_INVALIDARG => Err(DDApiError::BadParam(format!(
+                    "failed to create duplicate output. {:?}",
+                    err
+                ))),
+                E_ACCESSDENIED => Err(DDApiError::AccessDenied),
+                DXGI_ERROR_UNSUPPORTED => Err(DDApiError::Unsupported),
+                DXGI_ERROR_SESSION_DISCONNECTED => Err(DDApiError::Disconnected),
+                _ => Err(DDApiError::Unexpected(err.to_string())),
+            };
         }
-
-        Ok(())
+        Ok(dupl.unwrap())
     }
-
-    fn get_icon_hotspot(cursor: HCURSOR) -> Result<POINT> {
-        // get icon information
-        let mut icon_info = Default::default();
-        let result = unsafe { GetIconInfo(cursor, &mut icon_info) };
-        if result.is_err() {
-            unsafe { return Err(DDApiError::Unexpected(format!("failed to get icon info. `{:?}`", GetLastError()))); }
-        }
-
-        if !icon_info.hbmMask.is_invalid() {
-            unsafe { DeleteObject(icon_info.hbmMask); }
-        }
-        if !icon_info.hbmColor.is_invalid() {
-            unsafe { DeleteObject(icon_info.hbmColor); }
-        }
-
-        Ok(POINT { x: icon_info.xHotspot as _, y: icon_info.yHotspot as _ })
-    }
-
     fn reacquire_dup(&mut self) -> Result<()> {
         self.state.reset();
         self.dupl = None;
@@ -661,9 +757,8 @@ impl DesktopDuplicationApi {
         if dupl.is_err() {
             let _ = Self::switch_thread_desktop();
         }
-        let dupl = dupl?;
+        self.dupl = Some(dupl?);
         debug!("successfully acquired new duplication instance");
-        self.dupl = Some(dupl);
         Ok(())
     }
 
@@ -679,28 +774,50 @@ impl DesktopDuplicationApi {
         }
     }
 
+    /// Get the cursor compositor, creating it (compiling shaders + sampler + CB)
+    /// on first use. Used both in the capture loop (to feed cursor updates) and
+    /// in the compositing block.
+    fn ensure_cursor_renderer(&mut self) -> Result<&mut CursorRenderer> {
+        if self.state.cursor_renderer.is_none() {
+            self.state.cursor_renderer = Some(CursorRenderer::new(
+                self.d3d_device.clone(),
+                self.d3d_ctx.clone(),
+            )?);
+        }
+        Ok(self.state.cursor_renderer.as_mut().unwrap())
+    }
+
     fn ensure_cache_frame(&mut self, frame: &Texture) -> Result<()> {
         if self.state.frame.is_none() {
-            let tex = self.create_texture(frame.desc(), D3D11_USAGE_DEFAULT,
-                                          D3D11_BIND_RENDER_TARGET,
-                                          Default::default())?;
+            let tex = self.create_texture(
+                frame.desc(),
+                D3D11_USAGE_DEFAULT,
+                D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+                D3D11_RESOURCE_MISC_FLAG(0)
+            )?;
             self.state.frame = Some(tex);
+
+            let tex = self.create_texture(
+                frame.desc(),
+                D3D11_USAGE_DEFAULT,
+                D3D11_BIND_RENDER_TARGET,
+                D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
+            )?;
+            let mutex = tex.as_raw_ref().cast().unwrap();
+            self.state.shared_cursor_frame = Some(tex);
+            self.state.cursor_frame_mutex = Some(mutex);
         }
+
         Ok(())
     }
 
-    fn ensure_cache_cursor_frame(&mut self, frame: &Texture) -> Result<()> {
-        if self.state.cursor_frame.is_none() {
-            let tex = self.create_texture(frame.desc(), D3D11_USAGE_DEFAULT,
-                                          D3D11_BIND_RENDER_TARGET,
-                                          D3D11_RESOURCE_MISC_GDI_COMPATIBLE)?;
-            self.state.cursor_frame = Some(tex);
-        }
-        Ok(())
-    }
-
-    fn create_texture(&self, tex_desc: TextureDesc, usage: D3D11_USAGE, bind_flags: D3D11_BIND_FLAG,
-                      misc_flag: D3D11_RESOURCE_MISC_FLAG) -> Result<Texture> {
+    fn create_texture(
+        &self,
+        tex_desc: TextureDesc,
+        usage: D3D11_USAGE,
+        bind_flags: D3D11_BIND_FLAG,
+        misc_flag: D3D11_RESOURCE_MISC_FLAG,
+    ) -> Result<Texture> {
         let desc = D3D11_TEXTURE2D_DESC {
             Width: tex_desc.width,
             Height: tex_desc.height,
@@ -719,7 +836,10 @@ impl DesktopDuplicationApi {
         let mut tex = None;
         let result = unsafe { self.d3d_device.CreateTexture2D(&desc, None, Some(&mut tex)) };
         if let Err(e) = result {
-            Err(DDApiError::Unexpected(format!("failed to create texture. {:?}", e)))
+            Err(DDApiError::Unexpected(format!(
+                "failed to create texture. {:?}",
+                e
+            )))
         } else {
             Ok(Texture::new(tex.unwrap()))
         }
@@ -727,20 +847,243 @@ impl DesktopDuplicationApi {
 
     fn switch_thread_desktop() -> Result<()> {
         debug!("trying to switch Thread desktop");
-        let desk = unsafe { OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK as _, true, DESKTOP_ACCESS_FLAGS(GENERIC_READ.0)) };
+        let desk = unsafe {
+            OpenInputDesktop(
+                DF_ALLOWOTHERACCOUNTHOOK as _,
+                true,
+                DESKTOP_ACCESS_FLAGS(GENERIC_READ.0),
+            )
+        };
         if let Err(err) = desk {
             error!("dint get desktop : {:?}", err);
             return Err(DDApiError::AccessDenied);
         }
         let result = unsafe { SetThreadDesktop(desk.unwrap()) };
         if result.is_err() {
-            error!("dint switch desktop: {:?}",unsafe{GetLastError().to_hresult()});
+            error!("dint switch desktop: {:?}", unsafe {
+                GetLastError().to_hresult()
+            });
             return Err(DDApiError::AccessDenied);
         }
         Ok(())
     }
 }
 
+type FrameData = (HANDLE, FrameInfo, Option<CursorShape>);
+
+pub struct DesktopDuplicationApi {
+    d3d_device: ID3D11Device4,
+    d3d_ctx: ID3D11DeviceContext4,
+
+    // channels
+    // ____________
+    // frame, data passing channel
+    frame_rx: Receiver<Result<FrameData>>,
+    // signaling channel to start looking for next frame
+    signal_tx: SyncSender<Duration>,
+    // config channel to send any updated config.
+    config_tx: SyncSender<DuplicationApiOptions>,
+
+    // state
+    //
+    // frame handle
+    last_handle: Option<HANDLE>,
+    last_frame: Option<Texture>,
+    last_mutex: Option<IDXGIKeyedMutex>,
+    pub last_frame_info: Option<FrameInfo>,
+    pub last_cursor_shape: Option<CursorShape>,
+}
+
+extern "system" {
+    fn D3DKMTSetProcessSchedulingPriorityClass(handle: *mut c_void, priority: u32) -> u32;
+}
+
+pub fn set_gpu_priority() {
+    unsafe {
+        let process = GetCurrentProcess();
+        let status = D3DKMTSetProcessSchedulingPriorityClass(process.0 as *mut c_void, 5);
+        if status != 0 {
+            warn!("cant set realtime gpu priority!!!, {:#x}", status);
+            D3DKMTSetProcessSchedulingPriorityClass(process.0 as *mut c_void, 4);
+        } else {
+            info!("successfully set GPU Priority");
+        }
+    }
+}
+impl DesktopDuplicationApi {
+    pub fn new(adapter: Adapter, display: Display) -> Result<Self> {
+        let (device, ctx) = InternalDesktopDuplicationApi::create_device(&adapter)?;
+        let ddi = InternalDesktopDuplicationApi::new(adapter, display)?;
+        let (frame_rx, signal_tx, config_tx) = Self::start_loop(ddi)?;
+
+        unsafe {
+            let dev: IDXGIDevice4 = device.cast().unwrap();
+            dev.SetGPUThreadPriority(7);
+        }
+
+        return Ok(Self {
+            d3d_device: device,
+            d3d_ctx: ctx,
+
+            frame_rx,
+            signal_tx,
+            config_tx,
+
+            last_handle: None,
+            last_frame: None,
+            last_mutex: None,
+            last_frame_info: None,
+            last_cursor_shape: None,
+        });
+    }
+
+    /// this method is used to retrieve device and context used in this api. These can be used
+    /// to build directx color conversion and image scale.
+    pub fn get_device_and_ctx(&self) -> (ID3D11Device4, ID3D11DeviceContext4) {
+        return (self.d3d_device.clone(), self.d3d_ctx.clone());
+    }
+
+    /// configure duplication manager with given options.
+    pub fn configure(&mut self, opt: DuplicationApiOptions) {
+        let _ = self.config_tx.try_send(opt);
+    }
+
+    /// This function returns information about the last frame and provides userful information
+    /// for properly representing the cursor.
+    pub fn get_cursor_shape(&self, shape: &mut CursorShape) -> Result<()> {
+        if let Some(cshape) = &self.last_cursor_shape {
+            *shape = cshape.clone();
+            Ok(())
+        } else {
+            Err(DDApiError::BadParam("requested before frame!!!".to_owned()))
+        }
+    }
+
+    pub fn get_last_frame_info(&mut self) -> FrameInfo {
+        let mut last_frame = None;
+        swap(&mut self.last_frame_info, &mut last_frame);
+        last_frame.unwrap_or_default()
+    }
+
+    fn start_loop(
+        mut ddi: InternalDesktopDuplicationApi,
+    ) -> Result<(
+        Receiver<Result<FrameData>>,
+        SyncSender<Duration>,
+        SyncSender<DuplicationApiOptions>,
+    )> {
+        let (frame_tx, frame_rx) = channel(1);
+        let (signal_tx, signal_rx) = sync_channel(0);
+        let (config_tx, config_rx) = sync_channel(10);
+        thread::spawn(move || {
+            set_thread_priority();
+            let (dev, _) = ddi.get_device_and_ctx();
+            let dev: IDXGIDevice4 = dev.cast().unwrap();
+            unsafe {
+                dev.SetGPUThreadPriority(7);
+            }
+            set_gpu_priority();
+            let mut last_frame: Option<Texture> = None;
+            let mut last_handle: Option<HANDLE> = None;
+            loop {
+                if let Ok(config) = config_rx.try_recv() {
+                    ddi.configure(config)
+                }
+                if let Ok(timeout) = signal_rx.recv() {
+                    let frame = ddi.acquire_next_frame(timeout);
+                    let res: Result<FrameData> = match frame {
+                        Ok(tex) => {
+                            if last_frame
+                                .as_ref()
+                                .is_some_and(|lf| lf.as_raw_ref() == tex.as_raw_ref())
+                            {
+                                Ok((
+                                    0 as HANDLE,
+                                    ddi.get_last_frame_info(),
+                                    ddi.last_cursor_shape.clone(),
+                                ) as FrameData)
+                            } else {
+                                if let Some(last_handle_raw) = last_handle.as_ref() {
+                                    unsafe { CloseHandle(*last_handle_raw) };
+                                }
+                                last_handle = None;
+                                last_frame = None;
+                                let res1: IDXGIResource1 = tex.as_raw_ref().cast().unwrap();
+                                info!("creating shared handle");
+                                let handle_result = unsafe {
+                                    res1.CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ, None)
+                                };
+                                match handle_result {
+                                    Ok(handle) => {
+                                        last_handle = Some(handle.0);
+                                        last_frame = Some(tex);
+                                        Ok((
+                                            handle.0,
+                                            ddi.get_last_frame_info(),
+                                            ddi.last_cursor_shape.clone(),
+                                        ))
+                                    }
+                                    Err(e) => Err(DDApiError::Unexpected(e.to_string())),
+                                }
+                            }
+                        }
+                        Err(e) => Err(e),
+                    };
+                    if let Err(_) = frame_tx.blocking_send(res) {
+                        info!("closing frame capture thread");
+                        return;
+                    }
+                } else {
+                    break;
+                }
+            }
+        });
+
+        Ok((frame_rx, signal_tx, config_tx))
+    }
+
+    pub async fn acquire_next_frame(&mut self, timeout: Duration) -> Result<Texture> {
+        if let Some(res1) = self.last_mutex.as_ref() {
+            unsafe {
+                res1.ReleaseSync(0);
+            }
+        }
+        if let Err(_) = self.signal_tx.send(timeout) {
+            return Err(DDApiError::Unexpected("caputre loop ended".to_owned()));
+        };
+
+        if let Some(frame_res) = self.frame_rx.recv().await {
+            let frame = frame_res?;
+            // check the if the handle is same as old one
+            // if not, replace the handle and open new texture
+            if self.last_handle.is_none() || frame.0 != 0 {
+                debug!("got new handle");
+                self.last_handle = Some(frame.0);
+                let tex_raw = unsafe {
+                    self.d3d_device
+                        .OpenSharedResource1(windows::Win32::Foundation::HANDLE(frame.0))
+                        .map_err(|e| DDApiError::Unexpected(e.to_string()))?
+                };
+                let tex = Texture::new(tex_raw);
+                self.last_mutex = Some(tex.as_raw_ref().cast().unwrap());
+                self.last_frame = Some(tex);
+            }
+            // update cursor and frame info
+            self.last_cursor_shape = frame.2;
+            self.last_frame_info = Some(frame.1);
+            unsafe {
+                self.last_mutex
+                    .as_ref()
+                    .unwrap()
+                    .AcquireSync(1, 1000)
+                    .unwrap();
+            }
+            Ok(self.last_frame.clone().unwrap())
+        } else {
+            Err(DDApiError::Unexpected("caputre loop ended".to_owned()))
+        }
+    }
+}
 
 /// Settings to configure Desktop duplication api. these can be configured even after initialized.
 ///
@@ -757,18 +1100,22 @@ struct DuplicationState {
     last_resource: Option<IDXGIResource>,
 
     frame: Option<Texture>,
-    cursor_frame: Option<Texture>,
+    shared_cursor_frame: Option<Texture>,
 
-    cursor: Option<HCURSOR>,
-    hotspot_x: i32,
-    hotspot_y: i32,
+    cursor_frame_mutex: Option<IDXGIKeyedMutex>,
+
+    cursor_renderer: Option<CursorRenderer>,
 }
 
 impl DuplicationState {
     pub fn reset(&mut self) {
         self.frame = None;
+        self.shared_cursor_frame = None;
+
+        self.cursor_frame_mutex = None;
+        self.cursor_renderer = None;
+
         self.last_resource = None;
-        self.cursor_frame = None;
         self.frame_locked = false;
     }
 }
