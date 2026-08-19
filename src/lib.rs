@@ -10,6 +10,11 @@ pub mod errors;
 pub mod texture;
 pub mod tex_reader;
 
+mod shader;
+mod cursor_renderer;
+
+pub mod cursor;
+
 
 
 

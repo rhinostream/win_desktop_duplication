@@ -160,6 +160,24 @@ impl TextureReader {
                 }
             }
 
+            ColorFormat::ARGB10UNorm => {
+                // R10G10B10A2_UNORM: 32 bits/pixel = 4 bytes/pixel (packed 10-10-10-2).
+                let total_size = desc.width * desc.height * 4;
+                vec.resize(total_size as usize, 0);
+                for i in 0..desc.height {
+                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width * 4) as _), (desc.width * 4) as usize); }
+                }
+            }
+
+            ColorFormat::ARGB16Float => {
+                // R16G16B16A16_FLOAT: 64 bits/pixel = 8 bytes/pixel (four 16-bit floats).
+                let total_size = desc.width * desc.height * 8;
+                vec.resize(total_size as usize, 0);
+                for i in 0..desc.height {
+                    unsafe { copy(sub_res.pData.add((i * sub_res.RowPitch) as usize) as *const u8, vec.as_mut_ptr().add((i * desc.width * 8) as _), (desc.width * 8) as usize); }
+                }
+            }
+
             _ => unimplemented!()
         }
         unsafe { self.ctx.Unmap(raw_tex, 0); }
